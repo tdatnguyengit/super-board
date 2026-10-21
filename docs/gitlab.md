@@ -33,7 +33,8 @@ In `.claude/super-board/configs/<slug>.json`:
 "gitlab": {
   "project": "group/sub/app",       // full project path; required
   "column_label_prefix": "sb::",    // column labels: sb::Backlog, sb::Ready, …
-  "board_id": null                  // filled by onboarding; informational
+  "board_id": null,                 // filled by onboarding; informational
+  "require_pipeline": true          // false: an MR with no pipeline merges on verify_commands alone
 }
 ```
 
@@ -103,8 +104,24 @@ repo's only board config, else GitHub. Each reading costs one request from the w
 Pull-request verbs (`pr-*`) map to merge requests; `<pr>` is the MR `iid`.
 `pr-merge <pr> --sha <oid>` sends GitLab's `sha` merge parameter, so GitLab refuses the
 merge when the source branch moved after review; the verb exits 4, as on GitHub, and the
-merge gate re-reviews. `checks` reads the MR's head pipeline. `closingIssues` comes from
-GitLab's "closes issues" list for the MR (`Closes #N` in the description).
+merge gate re-reviews. `checks` reads the pipeline of the MR's current head commit (an older commit's run
+counts as no pipeline). `closingIssues` comes from GitLab's "closes issues" list for the
+MR (`Closes #N` in the description).
+
+The gate always runs `verify_commands` locally against the base first. On GitLab it then
+also needs the head pipeline to be green, because GitLab Free merges a red pipeline unless
+the project turns on "Pipelines must succeed": a failed pipeline exits 2 (back to Build), a
+running or missing one exits 4 (the next wave retries). A draft MR is marked ready before
+the merge, and a merge into a non-default base closes the linked issues itself.
+
+### Without a runner
+
+The pipeline is an extra check, not a requirement. With no runner — or on GitLab.com before
+the account is verified, where every pipeline fails with "user not verified" — turn CI/CD off
+for the project (Settings → General → Visibility → CI/CD, or delete `.gitlab-ci.yml`) and set
+`"require_pipeline": false`. Merge requests then have no pipeline, and the gate merges on the
+local `verify_commands` alone. Leaving CI on with no runner is the one setup that never
+merges: the pipeline either fails or waits forever.
 
 ## Known gaps
 

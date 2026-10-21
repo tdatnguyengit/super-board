@@ -64,7 +64,10 @@ GL_JQ_MR='
            headRefName: .source_branch, baseRefName: .target_branch,
            headRefOid: .sha, url: .web_url, mergeable: mergeable,
            labels: (.labels // []),
-           mergeCommit: (if .state == "merged" then (.squash_commit_sha // .merge_commit_sha // .sha) else null end)};
+           mergeCommit: (if .state == "merged"
+                         # the commit at the base tip: the merge commit, or with
+                         # fast-forward merges (none) the squash commit, else the head
+                         then (.merge_commit_sha // .squash_commit_sha // .sha) else null end)};
 '
 
 # GitLab default closing pattern, applied to a description (list rows only;
@@ -270,9 +273,14 @@ gl_checks() {
   gl__num "${1:-}" || gl__usage "checks <pr>"
   local mr pl jobs
   mr=$(gl__mr_get "$1") || exit $?
-  pl=$(jq -c '.head_pipeline // .pipeline // null' <<<"$mr")
+  # Only a pipeline for the MR's current head counts: GitLab keeps head_pipeline
+  # pointing at an older commit's run when the new head got none (CI disabled).
+  pl=$(jq -c '(.head_pipeline // .pipeline // null) as $p
+              | if $p != null and ($p.sha // .sha) == .sha then $p else null end' <<<"$mr")
   if [ "$pl" = null ]; then echo '{"state":"NONE","checks":[]}'; return 0; fi
-  jobs=$(gl__paged "projects/$(gl_pid)/pipelines/$(jq -r .id <<<"$pl")/jobs") || exit $?
+  # The pipeline's own status decides; a job list GitLab won't serve (CI/CD turned
+  # off for the project answers 404) only leaves the checks list empty.
+  jobs=$(SB_GLAB_BACKOFF=0 gl__paged "projects/$(gl_pid)/pipelines/$(jq -r .id <<<"$pl")/jobs" 2>/dev/null) || jobs='[]'
   jq -c --argjson p "$pl" '
     def map_state: if . == "success" then "SUCCESS"
       elif (. == "failed" or . == "canceled") then "FAILURE"

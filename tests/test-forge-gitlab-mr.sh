@@ -182,6 +182,13 @@ OUT=$(forge checks 1)
 [ "$(forge checks 4 | jq -r .state)" = SUCCESS ] || fail "checks success"
 [ "$(forge checks 5 | jq -r .state)" = FAILURE ] || fail "checks canceled"
 ok "checks: head pipeline success/failed/canceled/running/none, jobs as checks"
+routes "{
+  \"GET $MR/8\": {\"body\": {\"iid\": 8, \"sha\": \"new\", \"head_pipeline\": {\"id\": 60, \"sha\": \"old\", \"status\": \"failed\"}}},
+  \"GET $MR/9\": {\"body\": {\"iid\": 9, \"sha\": \"h\", \"head_pipeline\": {\"id\": 61, \"sha\": \"h\", \"status\": \"success\"}}}
+}"
+[ "$(forge checks 8)" = '{"state":"NONE","checks":[]}' ] || fail "checks: an older commit's pipeline counted"
+[ "$(forge checks 9)" = '{"state":"SUCCESS","checks":[]}' ] || fail "checks: unreadable jobs (CI disabled) halted"
+ok "checks: only the head commit's pipeline counts; a 404 job list leaves checks empty"
 
 # ── pr-merge ─────────────────────────────────────────────────────────────
 SHA=0123456789abcdef0123456789abcdef01234567
