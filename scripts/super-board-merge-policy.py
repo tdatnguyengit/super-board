@@ -6,8 +6,8 @@ config, the PR metadata and the diff; no network, no side effects.
 
     super-board-merge-policy.py --config <cfg.json> --meta <pr.json> --diff <file>
 
-`--meta` is `gh pr view --json labels,files,additions,deletions,body`.
-`--diff` is `gh pr diff` (only ADDED lines are searched for keywords).
+`--meta` is the PR view JSON with labels,files,additions,deletions,body.
+`--diff` is the PR's unified diff (only ADDED lines are searched for keywords).
 
 Stdout, one JSON object:
     { "human":      [ {"category": "money", "why": "path src/billing/charge.ts"} ],

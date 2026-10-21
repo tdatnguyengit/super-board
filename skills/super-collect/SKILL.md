@@ -50,7 +50,7 @@ Scripts live in `.claude/skills/super-collect/scripts/` (`S=` below). Every fetc
 |---|---|---|
 | `sentry` | `python3 $S/collect_sentry.py list --since <w>` — Sentry REST, Bearer token (scopes `event:read project:read`): org issues list, then `event <id>` / `tags <id>` for evidence | one unresolved issue → `bug`, fp `err|sentry|<id>` |
 | `posthog` | `python3 $S/collect_posthog.py list --since <w>` — HogQL `POST {host}/api/projects/{id}/query/` | one signal group → see table below |
-| `github` | Read open candidates with `gh issue list --state open --json number,title,body,labels,url --limit 300` (a full 300 is capped coverage, not a complete repo inventory), minus issues on the board and `source:*` labels | real work → **adopt** (`--adopt <n>`), never copied |
+| `github` | Read open candidates with `.claude/bin/super-board-forge.sh --config <cfg> issue-list --state open --limit 300` (a full 300 is capped coverage, not a complete repo inventory), minus issues on the board and `source:*` labels | real work → **adopt** (`--adopt <n>`), never copied |
 | `prs` | `python3 $S/collect_prs.py list --since <w>` — one GraphQL search `is:pr is:merged merged:>=DATE`, paginated, with comments, reviews and review threads (human and bot), super-review reports flagged (`<!-- super-review:report -->`) | one recurring root cause → `fix` / `refactor` / `feature`, fp `prs|<boundary>|<cause>` |
 | `architecture` | read-only finder sub-agent (below) | one finding → `refactor`, fp `arch|<module>|<problem>` |
 | custom (`collect.custom[]`) | `python3 $S/collect_custom.py list --since <w>` — http and cli sources run in the script; an `mcp` source comes back `status: agent`: call that server's read/list tool yourself (read-only), then pipe its JSON into `collect_custom.py normalize --name <n>` | one candidate → `bug` (errors, incidents) or `feature` (requests), `--source custom`, fp `custom|<name>|<key>` (the script emits it) |
@@ -133,7 +133,7 @@ and the window; nothing from other candidates. It checks, in order:
 2. **Still happening** — `collect_sentry.py check <id> --after <window start>` (`seenAfter`), or
    `collect_posthog.py check <signal> <key> --after <date>` (`stopped`, `issueStatus`).
 3. **Already fixed** — a closed issue or merged PR that matches
-   (`gh pr list --state merged --search "<symptom> in:title,body"`, plus the fingerprint), and
+   (`.claude/bin/super-board-forge.sh --config <cfg> pr-list --state merged --search "<symptom> in:title,body"`, plus the fingerprint), and
    then from the fix's merge date or release: Sentry `status: resolved` with `seenAfterRelease:
    false`; PostHog `stopped: true` (zero hits and ≥ 3 days of traffic since the merge; with
    `version_property`, no hits on versions after the fix). A refactor already landed counts too.

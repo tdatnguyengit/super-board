@@ -113,4 +113,16 @@ get 28 '.needsYouDone == false' || fail "#28: a 'done' before the 🙋 block mus
 get 26 '.runnable == false'     || fail "#26: done goes through resume, never the Ready sweep"
 get 2  '.needsYou == false and .needsYouDone == false' || fail "an ordinary card is not needsYou"
 
-echo "PASS: test-deps.sh (18 scenarios)"
+# 19 — forge contract shapes: labels as bare names, comments as a plain list
+#      (issue-view / issue-comments), not GraphQL {nodes:[…]}.
+PLAIN=$(mktemp); trap 'rm -f "$PLAIN"' EXIT
+printf '%s' '[{"number":40,"title":"t","state":"OPEN","body":"## Blocked by\n- None.","labels":["needs-you"],"comments":[{"body":"blocked-by: 41"}]},{"number":41,"title":"u","state":"OPEN","body":"## Blocked by\n- None.","labels":[],"comments":[]}]' > "$PLAIN"
+OUT=$("$DEPS" --from "$PLAIN") || fail "plain contract shapes must parse"
+get 40 '.blockers == [41] and .needsYou == true and .runnable == false' || fail "#40 plain shapes: $(echo "$OUT" | jq -c '.["40"]')"
+get 41 '.runnable == true' || fail "#41 plain shapes should be free"
+
+# 20 — an unknown forge is a config error, never a silent GitHub read.
+RC=0; SB_FORGE=svn "$DEPS" --repo a/b >/dev/null 2>&1 || RC=$?
+[ "$RC" = 66 ] || fail "unknown forge should exit 66, got $RC"
+
+echo "PASS: test-deps.sh (20 scenarios)"

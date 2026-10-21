@@ -13,7 +13,7 @@ the layout as a single Python pass.
 What it does:
   1. Resolve config slug: arg | `.claude/super-board/active` | sole config.
   2. ONE GraphQL call for project items (number, title, labels, Status).
-  3. ONE `gh issue view` per Blocked card for reason-tag extraction.
+  3. ONE issue-comments read (super-board-forge.sh) per Blocked card for reason-tag extraction.
   4. Read today's manifest and pipe everything to the locked-template
      renderer that prints the 80-col snapshot matching the spec in
      references/status.md.
@@ -41,6 +41,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import os
 import subprocess
 import sys
 import time
@@ -349,6 +350,24 @@ def resolve_config_slug(argv: list[str]) -> str:
     sys.exit(64)
 
 
+def forge(config_path: Path, *args: str) -> str:
+    """Run super-board-forge.sh (beside this script); exits 67 on failure like gh()."""
+    script = Path(__file__).with_name("super-board-forge.sh")
+    proc = subprocess.run(["bash", str(script), "--config", str(config_path), *args],
+                          capture_output=True, text=True, encoding="utf-8", check=False)
+    if proc.returncode != 0:
+        print(f"forge {args[0]} failed (exit {proc.returncode})", file=sys.stderr)
+        if proc.stderr.strip():
+            print(proc.stderr.strip(), file=sys.stderr)
+        sys.exit(67)
+    return proc.stdout
+
+
+def forge_name(cfg: dict[str, Any]) -> str:
+    """SB_FORGE, else the config's `forge`, else github (super-board-forge.sh's rule)."""
+    return os.environ.get("SB_FORGE") or cfg.get("forge") or "github"
+
+
 def gh(*args: str, check: bool = True) -> str:
     """Run gh and return stdout. Exits 67 on failure when check=True."""
     try:
@@ -509,8 +528,11 @@ def main() -> int:
         return 66
 
     cfg = json.loads(config_path.read_text())
-    project_owner: str = cfg["project"]["owner"]
-    project_number: int = int(cfg["project"]["number"])
+    on_github = forge_name(cfg) == "github"
+    # GitHub keeps its targeted GraphQL read below; other forges read the board
+    # through super-board-forge.sh items (same item shape as super-board-card.sh).
+    project_owner: str = (cfg.get("project") or {}).get("owner", "")
+    project_number: int = int((cfg.get("project") or {}).get("number") or 0)
     runs_dir = cfg.get("paths", {}).get("runs_dir", "docs/super-board/runs")
     run_date = datetime.date.today().isoformat()
     manifest_path = Path(runs_dir) / f"{run_date}-{config_slug}.md"
@@ -535,7 +557,19 @@ def main() -> int:
             sys.exit(67)
         return payload
 
-    items_raw, hit_cap = paginate_items(fetch_page)
+    if on_github:
+        items_raw, hit_cap = paginate_items(fetch_page)
+    else:
+        board = json.loads(forge(config_path, "items"))
+        items_raw, hit_cap = [], False
+        for it in board.get("items") or []:
+            c = it.get("content") or {}
+            if c.get("type") != "Issue":
+                continue
+            items_raw.append({"content": {"number": c.get("number"), "title": c.get("title") or it.get("title"),
+                                          "labels": {"nodes": [{"name": l} for l in it.get("labels") or []]}},
+                              "fieldValues": {"nodes": [{"name": it.get("status") or "Backlog",
+                                                         "field": {"name": "Status"}}]}})
     if hit_cap:
         print(
             f"warning: stopped after {MAX_ITEM_PAGES * 100} items — "
@@ -571,7 +605,13 @@ def main() -> int:
     reasons: dict[int, str] = {}
     for it in by_status["Blocked"]:
         n = it["number"]
-        out = gh("issue", "view", str(n), "--json", "comments", check=False)
+        # forge issue-comments: REST on GitHub (0 GraphQL points), best effort so a
+        # snapshot never trips the run's read halt.
+        proc = subprocess.run(["bash", str(Path(__file__).with_name("super-board-forge.sh")), "--config",
+                               str(config_path), "issue-comments", str(n)],
+                              capture_output=True, text=True, encoding="utf-8", check=False,
+                              env=dict(os.environ, SB_FORGE_BEST_EFFORT="1"))
+        out = '{"comments": %s}' % proc.stdout if proc.returncode == 0 and proc.stdout.strip() else ""
         if not out:
             continue
         try:
@@ -637,7 +677,7 @@ def main() -> int:
         return reason_for(reasons.get(n, ""))
 
     # ── header ──
-    proj = cfg["project"]
+    proj = cfg.get("project") or {"title": (cfg.get("gitlab") or {}).get("project", "?"), "number": "?"}
     mode_label = "human-approves" if cfg.get("human_approves_merge") else "auto-merge"
     tg = cfg.get("truth_gate", "off")
     tt = cfg.get("truth_threshold", 70)

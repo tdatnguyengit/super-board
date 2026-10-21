@@ -294,7 +294,7 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "sup
 
 ### State protocol
 - Read from issue + PR comments + PR review threads.
-- **GitHub budget** — every "move card" is `.claude/bin/super-board-card.sh --config <cfg> move <N> <Status>` (1 GraphQL point; `gh project item-list` / `field-list` cost ~100–200). Comments, labels and PR reads go over REST; [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the calls.
+- **GitHub budget** — every "move card" is `.claude/bin/super-board-forge.sh --config <cfg> move <N> <Status>` (GitHub: 1 GraphQL point via super-board-card.sh; a raw project item-list / field-list costs ~100–200). Every issue, comment, label and PR call is a verb of the same script (`.claude/bin/super-board-forge.sh help` lists them); [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the costs.
 - Respect handed-down worktree at `.claude/worktrees/issue-<N>-review/` and branch `issue-<N>-<slug>`.
 
 ### Two card types
@@ -342,13 +342,13 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 ### Merge protocol — Done means merged
 
 Builder opens PRs as **drafts**, and GitHub never auto-merges a draft. Skipping the
-`gh pr ready` step is why a six-hour run landed zero commits on `main` while producing
+mark-ready (`pr-ready`) step is why a six-hour run landed zero commits on `main` while producing
 two complete builds. In order, no shortcuts:
 
-1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
+1. `.claude/bin/super-board-forge.sh --config <cfg> pr-ready <PR>` — idempotent, safe on an already-ready PR.
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    keeps a person on every merge — the gate returns exit 7 below):
-   record `gh pr view <PR> --json headRefOid` when review passes, then
+   record `.claude/bin/super-board-forge.sh --config <cfg> pr-view <PR> | jq -r .headRefOid` when review passes, then
    `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --subject "<PR title>"
    --body-file <msg.md>` (it merges with `--match-head-commit`; the message is the PR title plus the
    commit bullets and `Closes #N` — writing-standard.md § 1). Exit 6 = the head moved after review → your evidence is void;
@@ -379,7 +379,7 @@ two complete builds. In order, no shortcuts:
    do not classify missing data as safe, bounce it to Build, or post a new approval
    request. Explicit recovery is in run-workflow.md → Required GitHub evidence.
 
-   `gh pr view <PR> --json state,mergeCommit` must report `MERGED` plus a commit sha,
+   `.claude/bin/super-board-forge.sh --config <cfg> pr-view <PR>` must report `state` `MERGED` plus a `mergeCommit` sha,
    and that sha must be an ancestor of the base branch
    (`git merge-base --is-ancestor <sha> origin/<base>`).
 4. Only then: close the issue, move card Review → **Done**, post the ✅ comment citing

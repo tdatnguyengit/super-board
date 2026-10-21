@@ -38,7 +38,13 @@
 # that does not have what it needs yet — one wave saved, one rewrite spent.
 #
 # Usage:
-#   super-board-deps.sh --repo <owner/name> [--issues 12,34] [--from <payload.json>]
+#   super-board-deps.sh --repo <owner/name> [--config <cfg.json>] [--issues 12,34] [--from <payload.json>]
+#
+# Forge: SB_FORGE, else the config's `forge` (default github) — the same rule as
+# super-board-forge.sh. GitHub reads one GraphQL query (below); GitLab reads
+# super-board-gitlab-read.py --kind deps-issues, which returns the same shape
+# (labels.nodes[].name, the last 8 comments as comments.nodes[].body). The parser
+# also accepts the forge contract's plain shapes (labels:[name], comments:[{body}]).
 #
 # Stdout, one object keyed by issue number:
 #   { "40": { "number": 40, "title": "…", "state": "OPEN",
@@ -60,21 +66,34 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=""; LIMIT="200"; ONLY=""; FROM=""
+REPO=""; LIMIT="200"; ONLY=""; FROM=""; CONFIG="${SB_CONFIG:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)   REPO="$2"; shift 2 ;;
+    --config) CONFIG="$2"; shift 2 ;;
     --limit)  LIMIT="$2"; shift 2 ;;
     --issues) ONLY="$2"; shift 2 ;;
-    --from)   FROM="$2"; shift 2 ;;   # a saved `gh issue list --json …` payload; tests use this
+    --from)   FROM="$2"; shift 2 ;;   # a saved issue-list JSON payload; tests use this
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 
 # Open issues carry the graph; closed ones are only needed to answer "is this
 # blocker still open?", which `openBlockers` derives from the open set itself.
+FORGE="${SB_FORGE:-}"
+if [ -z "$FORGE" ] && [ -n "$CONFIG" ]; then
+  [ -r "$CONFIG" ] || { echo "config not found: $CONFIG" >&2; exit 66; }
+  FORGE=$(jq -r '.forge // "github"' "$CONFIG") || { echo "config is not JSON: $CONFIG" >&2; exit 66; }
+fi
+FORGE="${FORGE:-github}"
+
 if [ -n "$FROM" ]; then
   ISSUES=$(cat "$FROM")
+elif [ "$FORGE" = gitlab ]; then
+  ISSUES=$(SB_GITLAB_READ_STRICT=1 python3 "$HERE/super-board-gitlab-read.py" ${CONFIG:+--config "$CONFIG"} \
+             --kind deps-issues --limit "$LIMIT") || exit $?
+elif [ "$FORGE" != github ]; then
+  echo "unknown forge: $FORGE (expected github or gitlab)" >&2; exit 66
 else
   [ -n "$REPO" ] || { echo "--repo <owner/name> is required" >&2; exit 64; }
   # GraphQL rather than `gh issue list`, because the lanes' `blocked-by:` line
@@ -93,8 +112,11 @@ else
   ISSUES=$(printf '%s' "$PAGES" | jq '[ .[].data.repository.issues.nodes[] ]')
 fi
 
-APPROVAL_REPO="$REPO"
-[ -z "$FROM" ] || APPROVAL_REPO=""
+APPROVAL_REPO="$REPO"; APPROVAL_CONFIG=()
+# Verified human approval is read live: GitHub by repo, other forges through the
+# forge with the config. Offline --from payloads never assert it.
+if [ -n "$FROM" ]; then APPROVAL_REPO=""
+elif [ "$FORGE" != github ]; then APPROVAL_CONFIG=(--config "$CONFIG"); fi
 echo "$ISSUES" | jq --arg only "$ONLY" '
   # ---- the parser ---------------------------------------------------------
   # Everything after the LAST "## Blocked by" heading, stopping at the next
@@ -134,14 +156,17 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
   # `blocked-by: -` is NOT "no blockers". It means nothing on this board clears
   # it — a credentials, permissions or product-decision block — so the card is
   # parseable AND deliberately not runnable. Only a person moves it.
+  # GraphQL nests lists as {nodes:[…]}; the forge contract returns plain lists,
+  # and labels as bare names. Accept both.
+  def list_of(f): (f // []) | if type == "object" then (.nodes // []) elif type == "array" then . else [] end;
   def comment_line:
-    [ (.comments.nodes // .comments // [])[]
+    [ list_of(.comments)[]
       | (.body // "") | split("\n")[]
       | select(test("^[ \t]*blocked-by:"; "i")) ]
     | last // null;
 
-  def bodies: [ (.comments.nodes // .comments // [])[] | (.body // "") ];
-  def label_names: [ (.labels.nodes // .labels // [])[] | (.name // "") ];
+  def bodies: [ list_of(.comments)[] | (.body // "") ];
+  def label_names: [ list_of(.labels)[] | if type == "string" then . else (.name // "") end ];
   # Index of the newest 🙋 Block comment, or null.
   def needs_at: ( bodies | to_entries
                   | map(select(.value | test("Reason tag:[^\n]*🙋"))) | last | .key ) // null;
@@ -192,4 +217,4 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO"
+  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${APPROVAL_CONFIG[@]+"${APPROVAL_CONFIG[@]}"}

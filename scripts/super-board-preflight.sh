@@ -31,7 +31,10 @@
 # view` per issue. The worker gh guard runs first when it is installed alongside.
 #
 # Usage:
-#   super-board-preflight.sh --repo <owner/name> --issues <N[,M…]>
+#   super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> [--config <cfg.json>]
+#   Forge: SB_FORGE, else the config's `forge` (default github). GitLab reads the same
+#   kinds from super-board-gitlab-read.py (--repo optional there; the project comes
+#   from the config) and matches GitLab's closing keywords.
 #                            [--inflight <cards.json>]   # [{number,title,status}] board cards
 #                            [--files a/b.ts,c/d.ts]     # paths the card will touch (else: parsed from body)
 #                            [--threshold 0.6]           # title Jaccard for a duplicate
@@ -48,10 +51,11 @@ set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
 
-REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"
+REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CONFIG="${SB_CONFIG:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)      REPO="$2"; shift 2 ;;
+    --config)    CONFIG="$2"; shift 2 ;;
     --issues|--issue) ISSUES="$2"; shift 2 ;;
     --inflight)  INFLIGHT="$2"; shift 2 ;;
     --files)     FILES="$2"; shift 2 ;;
@@ -59,39 +63,64 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
-[ -n "$REPO" ] && [ -n "$ISSUES" ] || { echo "usage: --repo <owner/name> --issues <N[,M…]>" >&2; exit 64; }
+FORGE="${SB_FORGE:-}"
+if [ -z "$FORGE" ] && [ -n "$CONFIG" ]; then
+  [ -r "$CONFIG" ] || { echo "config not found: $CONFIG" >&2; exit 66; }
+  FORGE=$(jq -r '.forge // "github"' "$CONFIG") || { echo "config is not JSON: $CONFIG" >&2; exit 66; }
+fi
+FORGE="${FORGE:-github}"
+case "$FORGE" in github|gitlab) ;; *) echo "unknown forge: $FORGE (expected github or gitlab)" >&2; exit 66 ;; esac
+{ [ -n "$REPO" ] || [ "$FORGE" = gitlab ]; } && [ -n "$ISSUES" ] || { echo "usage: --repo <owner/name> --issues <N[,M…]>" >&2; exit 64; }
 echo "$ISSUES" | grep -Eq '^[0-9]+(,[0-9]+)*$' || { echo "--issues must be numbers: $ISSUES" >&2; exit 64; }
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [ -f "$HERE/super-board-gh-guard.sh" ]; then
+if [ "$FORGE" = github ] && [ -f "$HERE/super-board-gh-guard.sh" ]; then
   # shellcheck source=/dev/null
   . "$HERE/super-board-gh-guard.sh"
   sb_gh_guard_check 200 || exit $?
 fi
 
-MERGED=$(python3 "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
-OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
-CLOSED=$(python3 "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
+# Closing keywords, as a regex alternation. GitHub: close/closes/closed, fix/fixes/
+# fixed, resolve/resolves/resolved. GitLab's default pattern adds the -ing forms
+# and implement*.
+if [ "$FORGE" = gitlab ]; then
+  export SB_GITLAB_READ_STRICT=1
+  GL=(python3 "$HERE/super-board-gitlab-read.py" ${CONFIG:+--config "$CONFIG"})
+  KEYWORDS='clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|implement(?:s|ed|ing)?'
+  MERGED=$("${GL[@]}" --kind prs-merged --limit 100) || exit $?
+  OPEN=$("${GL[@]}" --kind prs-open --limit 100) || exit $?
+  # GitLab has no close reason: stateReason is null, which counts as done below.
+  CLOSED=$("${GL[@]}" --kind issues-closed --limit 100) || exit $?
+else
+  KEYWORDS='close[sd]?|fix(?:e[sd])?|resolve[sd]?'
+  MERGED=$(python3 "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
+  OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
+  CLOSED=$(python3 "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
+fi
 CARDS="[]"
 [ -n "$INFLIGHT" ] && CARDS=$(cat "$INFLIGHT")
 
 TARGETS="[]"
 for n in ${ISSUES//,/ }; do
-  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
+  if [ "$FORGE" = gitlab ]; then
+    one=$("${GL[@]}" --kind issue --iid "$n") || exit $?
+  else
+    one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
+  fi
   TARGETS=$(jq -c --argjson one "$one" '. + [$one]' <<<"$TARGETS")
 done
 
 jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$OPEN" \
       --argjson closed "$CLOSED" --argjson cards "$CARDS" --arg files "$FILES" \
-      --argjson th "$THRESHOLD" '
+      --argjson th "$THRESHOLD" --arg kw "$KEYWORDS" '
   def stop: ["the","and","for","with","from","into","when","that","this","add","fix","make","use","should","not","are","can","new"];
   def toks: ascii_downcase | [scan("[a-z0-9]+")] | map(select(length > 2)) | . - stop | unique;
   def sim($a; $b): ($a | toks) as $x | ($b | toks) as $y
     | if ($x | length) == 0 or ($y | length) == 0 then 0
       else ((($x - ($x - $y)) | length) / (($x + $y) | unique | length) * 100 | floor) / 100 end;
-  # GitHub closing keywords only: a PR that merely mentions #N is not delivering it.
-  def closes($n): (.body // "") | test("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[ :]+#" + ($n | tostring) + "\\b");
-  def closed_refs: [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ :]+#([0-9]+)")[0] | tonumber ] | unique;
+  # The forge closing keywords only: a PR that merely mentions #N is not delivering it.
+  def closes($n): (.body // "") | test("(?i)\\b(?:" + $kw + ")[ :]+#" + ($n | tostring) + "\\b");
+  def closed_refs: [ (.body // "") | scan("(?i)\\b(?:" + $kw + ")[ :]+#([0-9]+)")[0] | tonumber ] | unique;
   def fps: [ (.body // "") | scan("(?m)^[ \t]*fingerprint:[ \t]*([^\n]*[^ \t\n])")[0] ];
   def paths: [ (.body // "") | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") ] | unique;
   # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".

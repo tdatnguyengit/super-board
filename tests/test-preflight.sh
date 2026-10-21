@@ -118,4 +118,33 @@ echo "$OUT10" | jq -e '.["61"].verdict == "sequence" and .["61"].tag == "overlap
 echo "$OUT10" | jq -e '.["62"].verdict == "proceed" and (.["60"] | has("_files") | not)' >/dev/null \
   || fail "#62 is clean and no internal _files leaks: $OUT10"
 
-echo "PASS: test-preflight.sh (10 scenarios)"
+# 11 — GitLab (SB_FORGE / config forge): reads come from super-board-gitlab-read.py
+#      with the same kinds, never gh; GitLab's closing keywords count ("Closing #N",
+#      "Implements #N"); a closed issue has no close reason (stateReason null).
+KIT="$TMP/kit"; mkdir -p "$KIT"; cp "$PRE" "$KIT/"
+cat > "$KIT/super-board-gitlab-read.py" <<'PY'
+import json, os, sys
+a = sys.argv[1:]
+kind = a[a.index("--kind") + 1]
+open(os.environ["GL_LOG"], "a").write(" ".join(a) + "\n")
+fx = {"prs-merged": [{"number": 7, "title": "Invoice CSV export", "body": "Closing #70", "url": "m7"}],
+      "prs-open": [{"number": 8, "title": "x", "body": "Implements #71", "url": "m8", "headRefName": "feat-71", "files": []}],
+      "issues-closed": [{"number": 69, "title": "Audit log for exports", "body": "", "stateReason": None}]}
+if kind == "issue":
+    n = int(a[a.index("--iid") + 1])
+    titles = {70: "Export invoices as CSV", 71: "Webhook retries", 72: "Audit log for exports"}
+    print(json.dumps({"number": n, "title": titles[n], "body": "## Acceptance Criteria\n- [ ] ok"}))
+else:
+    print(json.dumps(fx[kind]))
+PY
+printf '{"forge":"gitlab","gitlab":{"project":"grp/app"}}' > "$TMP/gl.json"
+export GL_LOG="$TMP/gl.log"; : > "$GH_LOG"
+OUT11=$(PATH="$TMP/bin:$PATH" bash "$KIT/super-board-preflight.sh" --config "$TMP/gl.json" --issues 70,71,72) \
+  || fail "GitLab preflight should run without --repo"
+[ ! -s "$GH_LOG" ] || fail "GitLab preflight must not call gh: $(cat "$GH_LOG")"
+grep -q -- '--config' "$GL_LOG" || fail "GitLab reads get the config"
+echo "$OUT11" | jq -e '.["70"].verdict == "hold" and .["70"].tag == "done"' >/dev/null || fail "#70: 'Closing #70' closes it on GitLab: $OUT11"
+echo "$OUT11" | jq -e '.["71"].verdict == "hold"' >/dev/null || fail "#71: an open MR that implements it: $OUT11"
+echo "$OUT11" | jq -e '.["72"].verdict == "hold"' >/dev/null || fail "#72: a closed look-alike with null stateReason counts as done: $OUT11"
+
+echo "PASS: test-preflight.sh (11 scenarios)"

@@ -24,8 +24,12 @@ wave spent ~2,850 of 5,000 points (~950 a card) and the board stalled an hour:
 
 The rules that follow from it:
 
-- **Cards go through `.claude/bin/super-board-card.sh`** — `move <issue> <Status>`,
-  `status <issue>`, `items`. It caches the project, Status field and option ids
+- **Everything goes through `.claude/bin/super-board-forge.sh --config <cfg> <verb>`**
+  (`help` lists the verbs). On GitHub its comment, label, assignee, close, issue-read and
+  PR-file verbs already use the REST forms below (0 GraphQL points); `pr-view`, `pr-list`,
+  `pr-ready`, `pr-create` and `checks` are the 1–2 point calls.
+- **Cards go through the forge's `move <issue> <Status>`, `status <issue>`, `items`**,
+  which on GitHub are `.claude/bin/super-board-card.sh`. It caches the project, Status field and option ids
   and each issue's item id, shared across worktrees. `gh project item-list`,
   `field-list` and `view` belong to onboarding.
 - **REST for everything REST can do** (`{owner}/{repo}` fills from the checkout):

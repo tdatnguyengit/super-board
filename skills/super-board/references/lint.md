@@ -6,8 +6,8 @@
 **Purpose:** clarify issues so a headless worker won't hallucinate. Every
 active-pipeline issue must have testable acceptance criteria.
 
-All clarifications are saved to GitHub via `gh issue edit` /
-`gh issue comment` — **no local file writes** during the per-issue loop.
+All clarifications are saved to GitHub via `.claude/bin/super-board-forge.sh issue-edit` /
+`issue-comment` — **no local file writes** during the per-issue loop.
 The only local artifact this verb produces is
 `docs/super-board/pre-flight.md` in Phase 6.
 

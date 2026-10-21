@@ -3,6 +3,12 @@
 
 A trusted request pins the code and human steps BEFORE a human replies `done`.
 Labels only describe UI state. They never authorize a merge. No GitHub writes.
+
+Forge: SB_FORGE, else --config's `forge` (default github). GitHub reads go straight
+through super-board-github-read.py (unchanged cost). Any other forge reads through
+super-board-forge.sh: pr-view, default-branch, issue-comments / pr-comments (with
+id, authorType, updatedAt) and permission <login> (docs/forge-contract.md). A verb
+the backend lacks fails the read, and an unreadable read never approves.
 """
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ from datetime import datetime
 import hashlib
 import json
 import re
+import os
 import subprocess
 import sys
 
@@ -27,11 +34,14 @@ BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
 DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
 # GitHub's closing keywords: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
+# GitLab's default closing pattern adds the -ing forms, implement*, and nested groups.
+CLOSES_GITLAB = re.compile(r"\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|implement(?:s|ed|ing)?)"
+                           r":?\s+([\w.-]+(?:/[\w.-]+)+)?#(\d+)\b", re.I)
 
 
-def body_links(body, repo):
+def body_links(body, repo, pattern=CLOSES):
     """Same-repo issues a PR body closes; other-repo references are ignored."""
-    return {int(n) for other, n in CLOSES.findall(body) if not other or other.lower() == repo}
+    return {int(n) for other, n in pattern.findall(body) if not other or other.lower() == repo}
 
 
 def scope_for(plan):
@@ -55,7 +65,7 @@ def parse_request(comment):
     try:
         value = json.loads(lines[0][len(PREFIX):])
         if (not isinstance(value, dict) or not isinstance(value.get("repo"), str)
-                or not re.fullmatch(r"[^/\s]+/[^/\s]+", value["repo"])
+                or not re.fullmatch(r"[^/\s]+(?:/[^/\s]+)+", value["repo"])
                 or type(value.get("pr")) is not int or value["pr"] < 1
                 or not SHA.fullmatch(value.get("head", ""))
                 or not SCOPE.fullmatch(value.get("scope", ""))):
@@ -133,7 +143,25 @@ def validate(comments, expected, permission):
         return hold("approval evidence is incomplete or unreadable")
 
 
-class GitHub:
+class Approvals:
+    """check() over a reader: pr(n), pr_comments(n), issue_comments(n), permission(login)."""
+
+    def check(self, number, head=None, scope=None, issue=None):
+        current_head, issues = self.pr(number)
+        if issue is not None and issue not in issues:
+            return {"approved": False, "why": "request issue is not linked to this PR"}
+        if head is not None and current_head != head:
+            return {"approved": False, "headChanged": True, "why": "PR head changed after review"}
+        comments = list(self.pr_comments(number))
+        for source in sorted(issues - self.shared_with_pr(number)):
+            comments.extend(self.issue_comments(source))
+        expected = {"repo": self.repo, "pr": number, "head": current_head}
+        if scope is not None:
+            expected["scope"] = scope
+        return validate(comments, expected, self.permission)
+
+
+class GitHub(Approvals):
     def __init__(self, repo):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
             raise ValueError("missing or invalid repository")
@@ -162,6 +190,17 @@ class GitHub:
         if any(not isinstance(c, dict) for page in pages for c in page):
             raise ValueError("unreadable comment")
         return [dict(comment, source=number) for page in pages for comment in page]
+
+    # A PR and its issues share one number space and one comments endpoint.
+    def issue_comments(self, number):
+        return self.comments(number)
+
+    def pr_comments(self, number):
+        return self.comments(number)
+
+    @staticmethod
+    def shared_with_pr(number):
+        return {number}
 
     def pr(self, number):
         # Paginate linked issues too: an omitted newer request must never make
@@ -203,24 +242,84 @@ class GitHub:
             issues |= body_links(body, self.repo)
         return head, issues
 
-    def check(self, number, head=None, scope=None, issue=None):
-        current_head, issues = self.pr(number)
-        if issue is not None and issue not in issues:
-            return {"approved": False, "why": "request issue is not linked to this PR"}
-        if head is not None and current_head != head:
-            return {"approved": False, "headChanged": True, "why": "PR head changed after review"}
-        comments = []
-        for source in sorted(issues | {number}):
-            comments.extend(self.comments(source))
-        expected = {"repo": self.repo, "pr": number, "head": current_head}
-        if scope is not None:
-            expected["scope"] = scope
-        return validate(comments, expected, self.permission)
+
+class Forge(Approvals):
+    """Reads through super-board-forge.sh. Merge requests and issues are separate
+    number spaces here, so an MR's comments carry source -N and issue N's carry N."""
+
+    def __init__(self, config, repo):
+        if not repo or not re.fullmatch(r"[^/\s]+(?:/[^/\s]+)+", repo):
+            raise ValueError("missing or invalid project")
+        self.config, self.repo = config, repo.lower()
+        self.permissions = {}
+
+    def run(self, *args):
+        result = subprocess.run(["bash", str(Path(__file__).with_name("super-board-forge.sh")),
+                                 "--config", self.config, *args], capture_output=True, text=True, timeout=300)
+        if result.returncode == github_read.HALTED:
+            raise github_read.ReadHalted(result.stderr.strip() or "forge reads are halted")
+        if result.returncode:
+            raise ValueError(f"forge {args[0]} failed")
+        return result.stdout
+
+    def permission(self, login):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+(?:\[bot\])?", login):
+            return None
+        if login not in self.permissions:
+            self.permissions[login] = self.run("permission", login).strip()
+        return self.permissions[login]
+
+    def _comments(self, verb, number, source):
+        value = json.loads(self.run(verb, str(number)))
+        if not isinstance(value, list) or any(not isinstance(c, dict) for c in value):
+            raise ValueError("unreadable comments")
+        return [{"id": c.get("id"), "body": c.get("body"), "created_at": c.get("createdAt"),
+                 "updated_at": c.get("updatedAt"), "source": source,
+                 "user": {"login": c.get("author"), "type": c.get("authorType")}} for c in value]
+
+    def issue_comments(self, number):
+        return self._comments("issue-comments", number, number)
+
+    def pr_comments(self, number):
+        return self._comments("pr-comments", number, -number)
+
+    @staticmethod
+    def shared_with_pr(number):
+        return set()
+
+    def pr(self, number):
+        pr = json.loads(self.run("pr-view", str(number)))
+        default = self.run("default-branch").strip()
+        head, base, body = pr.get("headRefOid"), pr.get("baseRefName"), pr.get("body")
+        if pr.get("state") != "OPEN":
+            raise ValueError("PR is not open")
+        if not all(isinstance(v, str) for v in (head, base, body, default)) or not SHA.fullmatch(head):
+            raise ValueError("unreadable PR head, base or body")
+        closing = pr.get("closingIssues")
+        if not isinstance(closing, list) or any(type(n) is not int for n in closing):
+            raise ValueError("unreadable linked issues")
+        issues = set(closing)
+        if base != default:
+            issues |= body_links(body, self.repo, CLOSES_GITLAB)
+        return head, issues
+
+
+def reader(args):
+    """GitHub(repo) on GitHub, Forge(config) elsewhere; None when nothing can be read."""
+    forge = os.environ.get("SB_FORGE") or ""
+    config = {}
+    if args.config:
+        config = json.loads(Path(args.config).read_text())
+        forge = forge or config.get("forge") or ""
+    if (forge or "github") == "github":
+        return GitHub(args.repo) if args.repo else None
+    return Forge(args.config, (config.get("gitlab") or {}).get("project") or args.repo)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo", required=True, help="owner/name on GitHub; may be empty with --config elsewhere")
+    ap.add_argument("--config", help="board config: picks the forge (and the GitLab project)")
     ap.add_argument("--pr", type=int)
     ap.add_argument("--head")
     ap.add_argument("--plan", help="JSON plan from merge-policy")
@@ -234,14 +333,17 @@ def main():
         return
     if args.deps:
         graph = json.load(sys.stdin)
-        github = GitHub(args.repo) if args.repo else None
+        try:
+            github = reader(args)
+        except (ValueError, OSError):
+            github = None
         for entry in graph.values():
             entry["needsYouDone"] = False
             entry["approvalRefresh"] = False
             if not entry.get("needsYou") or github is None:
                 continue
             try:
-                comments = github.comments(entry["number"])
+                comments = github.issue_comments(entry["number"])
                 blocks = trusted_blocks(comments, github.permission)
                 latest = max(blocks, key=lambda c: timestamp(c.get("created_at"))) if blocks else {}
                 request = parse_request(latest)
@@ -258,7 +360,10 @@ def main():
     if not args.pr or not args.head or not args.plan:
         ap.error("check requires --pr, --head and --plan")
     try:
-        result = GitHub(args.repo).check(args.pr, args.head, scope_for(json.loads(args.plan)))
+        approvals = reader(args)
+        if approvals is None:
+            raise ValueError("missing repository")
+        result = approvals.check(args.pr, args.head, scope_for(json.loads(args.plan)))
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         result = {"approved": False, "why": "approval evidence could not be verified"}
     print(json.dumps(result))

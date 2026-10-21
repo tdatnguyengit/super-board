@@ -168,15 +168,19 @@ if [ -z "$REPO_NAME" ]; then
   REPO_NAME=$(python3 "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
 fi
 REPO_FLAG=(-R "$REPO_NAME")
+# Issue writes go through the forge, pinned to the same repository.
+forge() { SB_FORGE_REPO="$REPO_NAME" bash "$(dirname "$GITHUB_READ")/super-board-forge.sh" "$@"; }
 ISSUES_JSON=$(python3 "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
 EXISTING=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fingerprint "$FINGERPRINT" '[.[] | select(.state == "OPEN" and any(.body | splits("\\s+"); . == $fingerprint)) | .number] | first // empty')
 
 
 if [ -n "$EXISTING" ]; then
   python3 "$GITHUB_READ" --check || exit $?
-  gh issue comment "$EXISTING" "${REPO_FLAG[@]}" --body "Seen again${ITER:+ on iteration ${ITER}}.
-
-${BODY_RAW}" >/dev/null 2>&1 || { python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+  SEEN_TMP=$(mktemp)
+  printf 'Seen again%s.\n\n%s\n' "${ITER:+ on iteration ${ITER}}" "$BODY_RAW" > "$SEEN_TMP"
+  forge issue-comment "$EXISTING" "$SEEN_TMP" >/dev/null 2>&1 \
+    || { rm -f "$SEEN_TMP"; python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+  rm -f "$SEEN_TMP"
   echo "$EXISTING"
   exit 0
 fi
@@ -247,9 +251,10 @@ LABEL_ARGS=()
 for l in "${LABELS[@]}"; do LABEL_ARGS+=(--label "$l"); done
 
 python3 "$GITHUB_READ" --check || exit $?
-ISSUE_URL=$(gh issue create "${REPO_FLAG[@]}" --title "$FULL_TITLE" --body-file "$BODY_TMP" "${LABEL_ARGS[@]}") \
+CREATED=$(forge issue-create --title "$FULL_TITLE" --body-file "$BODY_TMP" "${LABEL_ARGS[@]}") \
   || { python3 "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
-ISSUE_N=$(basename "$ISSUE_URL")
+ISSUE_URL=$(printf '%s' "$CREATED" | jq -r .url)
+ISSUE_N=$(printf '%s' "$CREATED" | jq -r .number)
 
 # --- promote onto the board -------------------------------------------------
 # Past this point the issue exists, so the number goes to stdout no matter what:

@@ -591,9 +591,9 @@ trail; the GH issue is the persistent tracker that you, the human, and any
 future `/super-build` worker can pick up.
 
 **This is a carved exception to the project rule "ask before
-`gh issue create`":** the loop is autonomous and runs unattended, so it is
+filing an issue":** the loop is autonomous and runs unattended, so it is
 authorized to auto-file issues — but ONLY with the `source:qa` label
-so the human can triage them all with `gh issue list -l source:qa`.
+so the human can triage them all with `.claude/bin/super-board-forge.sh issue-list --label source:qa`.
 
 **For each bug** (regression red OR explore `[b]`), do this immediately on
 detection (do NOT batch at end of iter):
@@ -663,7 +663,7 @@ detection (do NOT batch at end of iter):
 - `low` — cosmetic, copy, low-impact polish, documentation/testability cleanup.
 
 If unsure between two tiers, pick the **higher** priority. The human can
-re-label later via `gh issue edit`.
+re-label later via `.claude/bin/super-board-forge.sh issue-edit`.
 
 ### Phase 3 — Report
 
