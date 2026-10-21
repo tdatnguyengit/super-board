@@ -226,7 +226,7 @@ for skill in $PRIMARY_SKILLS $SECONDARY_SKILLS; do
   install_skill "$skill" "$SHARED/skills/$skill" || true
 done
 
-SCRIPTS="super-board-forge.sh super-board-forge-github.sh super-board-forge-gitlab.sh super-board-forge-gitlab-board.sh super-board-forge-gitlab-mr.sh super-board-gitlab-read.py super-board-project-verifier.py super-board-skills-ready.py super-board-calibration.py super-board-verification-ready.py super-board-github-read.py super-board-collect-state.py super-board-run.sh super-board-gh-guard.sh super-board-card.sh super-board-status.py super-board-wave-plan.sh super-board-codex-lane.sh super-board-codex-wave.sh super-board-deps.sh super-board-preflight.sh super-board-merge-gate.sh super-board-merge-policy.py super-board-approval.py super-board-env-check.sh super-board-agents-md.py super-board-settings.py super-board-setup.py super-board-usage.sh super-board-throttle.sh super-board-host.sh super-board-pr-body.sh super-review-file-refactor.sh super-qa-file-bug.sh super-board-stop.sh"
+SCRIPTS="super-board-forge.sh super-board-forge-detect.sh super-board-forge-github.sh super-board-forge-gitlab.sh super-board-forge-gitlab-board.sh super-board-forge-gitlab-mr.sh super-board-gitlab-read.py super-board-project-verifier.py super-board-skills-ready.py super-board-calibration.py super-board-verification-ready.py super-board-github-read.py super-board-collect-state.py super-board-run.sh super-board-gh-guard.sh super-board-card.sh super-board-status.py super-board-wave-plan.sh super-board-codex-lane.sh super-board-codex-wave.sh super-board-deps.sh super-board-preflight.sh super-board-merge-gate.sh super-board-merge-policy.py super-board-approval.py super-board-env-check.sh super-board-agents-md.py super-board-settings.py super-board-setup.py super-board-usage.sh super-board-throttle.sh super-board-host.sh super-board-pr-body.sh super-review-file-refactor.sh super-qa-file-bug.sh super-board-stop.sh"
 for script in $SCRIPTS; do
   if [ -f "$REPO_ROOT/scripts/$script" ]; then
     copy_file "$REPO_ROOT/scripts/$script" "$SHARED/bin/$script"
@@ -306,6 +306,29 @@ elif [ "$PROTECT" -eq 1 ]; then
   echo "   🛡️  --no-hooks: only the push guard → .claude/settings.json ($(merge_settings "$REPO_ROOT/hooks/settings-protect-main.json"))"
 else
   echo "   ⏭️  guard hooks skipped (--no-hooks)"
+fi
+
+# Forge CLI: a GitLab project needs glab (not gh) signed in to its host. GitHub
+# projects print nothing here, as before. A hint only — onboard's checks stop on it.
+GITLAB_HOST=$(python3 - "$TARGET/.claude/super-board/configs" <<'PY' 2>/dev/null || true
+import glob, json, os, sys
+for p in sorted(glob.glob(os.path.join(sys.argv[1], "*.json"))):
+    try:
+        c = json.load(open(p))
+    except Exception:
+        continue
+    if isinstance(c, dict) and c.get("forge") == "gitlab":
+        print(c.get("forge_host") or "gitlab.com"); break
+PY
+)
+if [ -z "$GITLAB_HOST" ] && ! ls "$TARGET"/.claude/super-board/configs/*.json >/dev/null 2>&1; then
+  GITLAB_HOST=$(bash "$REPO_ROOT/scripts/super-board-forge-detect.sh" --root "$TARGET" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["forge_host"] if d.get("forge") == "gitlab" else "")' 2>/dev/null || true)
+fi
+if [ -n "$GITLAB_HOST" ]; then
+  CLI_RES=$(bash "$REPO_ROOT/scripts/super-board-env-check.sh" --cli --forge gitlab --host "$GITLAB_HOST" 2>&1) \
+    && echo "   🦊 GitLab ($GITLAB_HOST): glab ready" \
+    || printf '%s\n' "$CLI_RES" | { grep -E 'missing|too old' | sed 's/^/   ! /'; } || true
 fi
 
 # AGENTS.md: a re-install refreshes the managed super-board block and touches
