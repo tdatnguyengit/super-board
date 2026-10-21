@@ -63,6 +63,7 @@ sb_glab_api() {
 # ── verbs ───────────────────────────────────────────────────────────────
 [ -f "$HERE/super-board-forge-gitlab-board.sh" ] && . "$HERE/super-board-forge-gitlab-board.sh"
 [ -f "$HERE/super-board-forge-gitlab-mr.sh" ] && . "$HERE/super-board-forge-gitlab-mr.sh"
+[ -f "$HERE/super-board-forge-gitlab-quota.sh" ] && . "$HERE/super-board-forge-gitlab-quota.sh"
 
 FN="gl_${VERB//-/_}"
 if declare -F "$FN" >/dev/null; then

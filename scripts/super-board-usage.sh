@@ -41,6 +41,9 @@
 # Snapshot: $SB_USAGE_FILE, default ~/.claude/super-board/usage.json (usage is
 # per account, not per repo, so one file serves every board).
 #
+# On a GitLab board (config `forge: "gitlab"` or SB_FORGE=gitlab) check also reads the
+# forge's per-minute API quota first and pauses (window "gitlab") when it is low.
+#
 # check prints one JSON line:
 #   {"state":"ok|pause|unknown","window":"five_hour|seven_day|null",
 #    "used":96,"resets_at":1738425600,"age":42,"reason":"…"}
@@ -78,6 +81,31 @@ if [ -z "$THRESHOLD" ] && [ -n "$CONFIG" ] && [ -f "$CONFIG" ]; then
   THRESHOLD=$(jq -r '.usage_pause_pct // empty' "$CONFIG")
 fi
 THRESHOLD="${THRESHOLD:-95}"
+
+# GitLab boards (SB_FORGE, else the config's `forge`): before the Claude reading, the
+# forge's per-minute API window. Remaining under the guard threshold (10% of the limit,
+# floor 10; super-board-gh-guard.sh → sb_gl_threshold) pauses the wave until resetAt —
+# a 429 reads as remaining 0. An unreadable quota is left to the worker guard.
+FORGE="${SB_FORGE:-}"
+if [ -z "$FORGE" ] && [ -n "$CONFIG" ] && [ -f "$CONFIG" ]; then
+  FORGE=$(jq -r '.forge // "github"' "$CONFIG" 2>/dev/null || echo github)
+fi
+if [ "${FORGE:-github}" = gitlab ]; then
+  # shellcheck source=super-board-gh-guard.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-gh-guard.sh"
+  if [ -n "$CONFIG" ]; then GLQ=$(SB_CONFIG="$CONFIG" SB_FORGE=gitlab sb_forge_quota 2>/dev/null || true)
+  else GLQ=$(SB_FORGE=gitlab sb_forge_quota 2>/dev/null || true); fi
+  GLREM=$(printf '%s' "$GLQ" | jq -r '.remaining // empty' 2>/dev/null || true)
+  if [ -n "$GLREM" ]; then
+    GLMIN=$(sb_gl_threshold "$(printf '%s' "$GLQ" | jq -r '.limit // "null"')")
+    if [ "$GLREM" -lt "$GLMIN" ]; then
+      printf '%s' "$GLQ" | jq -c --argjson min "$GLMIN" \
+        '{state:"pause", window:"gitlab", used:null, resets_at:.resetAt, age:0,
+          reason:"gitlab API at \(.remaining) left (threshold \($min)/min)"}'
+      exit 10
+    fi
+  fi
+fi
 
 if [ ! -f "$FILE" ]; then
   echo '{"state":"unknown","window":null,"used":null,"resets_at":null,"age":null,"reason":"no usage snapshot — add the record line to your status-line script (run-workflow.md)"}'
