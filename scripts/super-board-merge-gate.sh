@@ -70,8 +70,12 @@
 # Exit codes, all meaningful to the caller:
 #   0  merged
 #   2  verification failed — branch needs a rebase pass, NOT a Blocked card
+#      (GitLab: also a failed MR pipeline — GitLab merges a red pipeline unless the
+#      project requires green, so the gate checks it itself)
 #   3  PR is closed without a merge; no merge attempted
-#   4  could not take the lock within the timeout
+#   4  could not take the lock within the timeout — or (GitLab) the MR pipeline is
+#      still running / missing: the card stays in Review and the next wave retries.
+#      A forge pr-merge exit 4 (head moved) is NOT this: it surfaces as 6 below.
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
@@ -147,6 +151,18 @@ printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py"
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
+# Forge (docs/forge-contract.md): SB_FORGE, else config `forge`, default github.
+# GitHub keeps its bounded, shape-checked reads below; any other forge reads the
+# PR through super-board-forge.sh. The merge itself always goes through the forge.
+FORGE="${SB_FORGE:-$(echo "$CONFIG_JSON" | jq -r '.forge // "github"')}"
+case "$FORGE" in github|gitlab) ;; *) echo "unknown forge: $FORGE (expected github or gitlab)" >&2; exit 66 ;; esac
+APPROVAL_REPO="$REPO"
+[ "$FORGE" = github ] || APPROVAL_REPO=$(echo "$CONFIG_JSON" | jq -r '.gitlab.project // ""')
+forge() { bash "$HERE/super-board-forge.sh" --config "$CONFIG" "$@"; }
+# A failed forge read: 79 keeps the run's halt; anything else is unreadable evidence.
+forge_read() { local rc=0 out; out=$(forge "$@") || rc=$?
+  [ "$rc" -eq 0 ] || { [ "$rc" -eq 79 ] && exit 79; say "could not read PR #${PR} ($1)"; exit 1; }
+  printf '%s\n' "$out"; }
 export SB_REPO_PATH="$REPO_PATH"
 # Read with a while-loop rather than `mapfile`: macOS ships bash 3.2 and every
 # other script in this repo runs there, so this one does too.
@@ -206,12 +222,29 @@ trap cleanup EXIT
 # ---- the head guard --------------------------------------------------------
 # Review evidence belongs to one commit. If the branch moved after the Reviewer
 # passed it, the tests it reran and the diff it read describe something else.
-pr_head() { python3 "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
+pr_head() {
+  if [ "$FORGE" != github ]; then forge_read pr-view "$PR" | jq -r '.headRefName + " " + .headRefOid'; return; fi
+  python3 "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
               -q '.headRefName + " " + .headRefOid'; }
 HEAD=$(pr_head) || exit $?
 read -r HEAD_REF HEAD_SHA <<<"$HEAD"
 [ -n "${HEAD_SHA:-}" ] || { say "could not read the PR head from GitHub"; exit 1; }
-pr_state() { python3 "$GITHUB_READ" --kind merge-state -- pr view "$PR" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid; }
+pr_state() {
+  if [ "$FORGE" != github ]; then
+    forge_read pr-view "$PR" | jq -c '{state, headRefOid, mergeCommit: (if .mergeCommit then {oid: .mergeCommit} else null end)}'; return
+  fi
+  python3 "$GITHUB_READ" --kind merge-state -- pr view "$PR" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid; }
+# The policy's input, in `gh pr view --json labels,files,additions,deletions,changedFiles,body` shape.
+pr_meta() {
+  if [ "$FORGE" != github ]; then
+    local view files
+    view=$(forge_read pr-view "$PR"); files=$(forge_read pr-files "$PR")
+    jq -n --argjson v "$view" --argjson f "$files" '{files: [$f[] | {path: .}], labels: [$v.labels[]? | {name: .}],
+      body: ($v.body // ""), additions: ($v.additions // 0), deletions: ($v.deletions // 0), changedFiles: ($f | length)}'
+    return
+  fi
+  python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body
+}
 STATE=$(pr_state) || exit $?
 if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
   say "already merged; no verification, migration, or merge is repeated"
@@ -236,8 +269,9 @@ fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Outside $SCRATCH: `git worktree add` below needs that directory empty.
 META=$(mktemp); DIFF=$(mktemp)
-python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
-python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
+pr_meta > "$META"
+if [ "$FORGE" != github ]; then forge_read pr-diff "$PR" > "$DIFF"
+else python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"; fi
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
   say "merge policy could not be evaluated — a human merges this one"; exit 7; }
@@ -246,13 +280,13 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
 approval_check() {
-  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
+  APPROVAL=$(python3 "$HERE/super-board-approval.py" --config "$CONFIG" --repo "$APPROVAL_REPO" --pr "$PR" \
     --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
 approval_request() {
-  python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
+  python3 "$HERE/super-board-approval.py" --request --repo "$APPROVAL_REPO" --pr "$PR" \
     --head "$HEAD_SHA" --plan "$PLAN"
 }
 HUMAN=$(echo "$PLAN" | jq -r '.human[] | "human-gate: \(.category) — \(.why)"')
@@ -326,7 +360,7 @@ fi
 if [ "$APPROVED" = true ]; then
   # Code remains pinned; body-declared human steps and config can change without
   # a commit. Reclassify them too instead of reusing the old approval scope.
-  python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
+  pr_meta > "$META"
   PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
     say "human approval scope could not be refreshed"; exit 7; }
   approval_check
@@ -343,13 +377,49 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
-# --match-head-commit makes GitHub refuse if anything was pushed after HEAD_SHA,
-# including during the verification run above.
+# GitLab merges a red or missing pipeline unless the project setting "Pipelines
+# must succeed" is on, and refuses a draft (405). Check both here. `checks` NONE
+# passes only when the config says the project has no CI (gitlab.require_pipeline: false).
+if [ "$FORGE" = gitlab ]; then
+  CHECKS=$(forge_read checks "$PR" | jq -r .state)
+  case "$CHECKS" in
+    SUCCESS) : ;;
+    NONE) [ "$(echo "$CONFIG_JSON" | jq -r '.gitlab.require_pipeline == false')" = true ] || {
+            say "no pipeline on the MR and gitlab.require_pipeline is not false — stay in Review"; exit 4; } ;;
+    FAILURE) say "the MR pipeline failed — send it back to Build"; exit 2 ;;
+    *) say "the MR pipeline is ${CHECKS:-unknown} — stay in Review and retry next wave"; exit 4 ;;
+  esac
+  if [ "$(forge_read pr-view "$PR" | jq -r .isDraft)" = true ]; then
+    forge pr-ready "$PR" >/dev/null || { say "MR !${PR} is a draft and could not be marked ready"; exit 1; }
+  fi
+fi
+
+# After a merge into a base that is not the default branch, `Closes #N` closes
+# nothing (both forges). Close the linked issues here; best effort, never fails
+# the merge that already happened.
+close_linked() {
+  local default view n kw
+  default=$(SB_FORGE_BEST_EFFORT=1 forge default-branch 2>/dev/null) || return 0
+  [ -n "$default" ] && [ "$default" != "$BASE" ] || return 0
+  view=$(SB_FORGE_BEST_EFFORT=1 forge pr-view "$PR" 2>/dev/null) || return 0
+  kw='close[sd]?|fix(?:e[sd])?|resolve[sd]?'
+  [ "$FORGE" = github ] || kw='clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|implement(?:s|ed|ing)?'
+  for n in $(echo "$view" | jq -r --arg kw "$kw" '[.closingIssues[]?] + [(.body // "")
+      | scan("(?i)\\b(?:" + $kw + "):?[ \t]+#([0-9]+)\\b")[0] | tonumber] | unique | .[]'); do
+    SB_FORGE_BEST_EFFORT=1 forge issue-close "$n" --reason completed >/dev/null 2>&1 \
+      && say "closed #${n} (merged into ${BASE}, not the default ${default})" \
+      || say "warn: could not close #${n} after the merge into ${BASE}"
+  done
+}
+
+# pr-merge --sha (GitHub: --match-head-commit) refuses if anything was pushed after HEAD_SHA,
+# including during the verification run above. Its exit 4 (head moved) is
+# reconciled below into this gate's 6; nothing here returns the forge's code.
 python3 "$GITHUB_READ" --check
-if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
-     ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
-     --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
+if SB_MERGE_GATE=1 bash "$HERE/super-board-forge.sh" --config "$CONFIG" pr-merge "$PR" --sha "$HEAD_SHA" --squash --delete-branch \
+     ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
+  close_linked
   # Post-merge tidy-up: drop worktrees and local branches the merge just made
   # redundant. Optional (only when the cleanup-wt hook is installed), local-only, and it
   # can never fail the merge that already happened.
@@ -360,7 +430,8 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
 fi
 STATE=$(pr_state) || exit $?
 if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
-  say "merge response was lost; GitHub confirms the merge commit"
+  say "merge response was lost; the forge confirms the merge commit"
+  close_linked
   exit 0
 fi
 NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)

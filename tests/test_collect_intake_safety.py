@@ -28,6 +28,15 @@ root=pathlib.Path(os.environ['FIXTURE_ROOT']); args=sys.argv[1:]
 def flag(name): return args[args.index(name)+1]
 def emit(v): print(json.dumps(v))
 def issues(): return json.loads((root/'issues.json').read_text())
+# The forge writes comments and labels over REST; log them as the CLI calls they replace.
+import re
+rest=[a for a in args if a.startswith('repos/')] if args[:1]==['api'] else []
+m=re.fullmatch(r'repos/([^/]+/[^/]+)/issues/(\d+)/(comments|labels)',rest[0]) if rest else None
+if m and m[3]=='comments':
+ body=pathlib.Path(next(a for a in args if a.startswith('body=@'))[6:]).read_text().rstrip('\n')
+ args=['issue','comment',m[2],'-R',m[1],'--body',body]
+elif m:
+ args=['issue','edit',m[2],'-R',m[1]]+[x for a in args if a.startswith('labels[]=') for x in ('--add-label',a[9:])]
 with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(args)+'\n')
 kind=args[:2]
 if kind==['repo','view']: print('acme/app' if 'nameWithOwner' in ' '.join(args) else 'acme')

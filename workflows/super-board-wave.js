@@ -131,8 +131,8 @@ const REVIEW_MEMORY = [
 // finding a card with `gh project item-list` (~203 points on a 131-card board)
 // and its Status options with `gh project field-list` (101) before each move.
 const BOARD_IO = () =>
-  `Board moves and reads: .claude/bin/super-board-card.sh --config ${input.configPath} move <issue> <Status> ` +
-  `(1 GraphQL point) · status <issue> · items. Comments, labels, PR reads: REST per .claude/skills/super-board/references/rate-limit-etiquette.md → "Price list". Read GitHub once per decision, never in a sleep loop.`
+  `Board, issue and PR calls: .claude/bin/super-board-forge.sh --config ${input.configPath} <verb> — move <issue> <Status> ` +
+  `(1 GraphQL point on GitHub) · status <issue> · items · claim/release · issue-view · issue-comment <N> <file> · issue-edit · pr-create · pr-view · pr-ready · checks (help lists them all; never call gh for these directly). Costs: .claude/skills/super-board/references/rate-limit-etiquette.md → "Price list". Read the forge once per decision, never in a sleep loop.`
 
 // The orchestrator resolves every remaining chain before claims. The runtime has
 // no subprocess API; each worker repeats the deterministic CLI before its writes.
@@ -299,7 +299,7 @@ const results = await pipeline(
       (typed
         ? `Its label says "${typed}": return kind "${typed}" — the label routes the card, you never override it.`
         : `It has no type label, so it is built (no label = Building). Return feature or bug — never qa, ` +
-          `which only a person sets. Existing docs/ux/tests/refactor/tech-debt rows keep their label chain: classify complexity without adding feature/bug. For a truly untyped card, re-run skills-ready against a copy of this card with the proposed label before any label write, then add that label: gh issue edit ${card.number} --add-label <kind>.`),
+          `which only a person sets. Existing docs/ux/tests/refactor/tech-debt rows keep their label chain: classify complexity without adding feature/bug. For a truly untyped card, re-run skills-ready against a copy of this card with the proposed label before any label write, then add that label: .claude/bin/super-board-forge.sh --config ${input.configPath} issue-edit ${card.number} --add-label <kind>.`),
       { label: `classify:#${card.number}`, phase: 'Classify', model: classifyModel, schema: CLASSIFY_SCHEMA }
     )
     if (cls && cls.status === 'halted') halted = true

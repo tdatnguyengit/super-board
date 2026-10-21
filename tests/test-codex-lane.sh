@@ -35,7 +35,7 @@ RC=0; lane review >"$T/out" || RC=$?
 lane review --codex >"$T/out"
 jq -e '.status == "advanced" and .column == "Done"' "$T/out" >/dev/null || fail 'explicit review allowed'
 grep -q -- '--expect-head' "$SB_CODEX_TEST_LOG" || fail 'review must pin reviewed head to merge gate'
-grep -q 'Never run bare gh pr merge' "$SB_CODEX_TEST_LOG" || fail 'review must keep merge protocol'
+grep -q 'Never merge any other way' "$SB_CODEX_TEST_LOG" || fail 'review must keep merge protocol'
 [ "$(last_model)" = default ] || fail 'no model uses Codex default'
 lane build --codex=flag-model >"$T/out"
 [ "$(last_model)" = flag-model ] || fail 'flag model must reach -m'

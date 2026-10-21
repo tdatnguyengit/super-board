@@ -241,5 +241,70 @@ print(json.dumps(out))
             self.assertFalse(deps()["needsYouDone"], "a newer maintainer request must block resume")
 
 
+class ForgeTests(unittest.TestCase):
+    """Non-GitHub forges read through super-board-forge.sh verbs (#1)."""
+
+    def setUp(self):
+        self.project = "grp/sub/app"
+        request = approval.request_for(self.project, 9, HEAD, approval.scope_for(PLAN))
+        self.scope = request["scope"]
+        def note(i, body, second, login="owner"):
+            at = f"2026-10-03T00:00:{second:02d}Z"
+            return {"id": i, "author": login, "authorType": "User", "body": body, "createdAt": at, "updatedAt": at}
+        self.issue_notes = [note(1, "Reason tag: 🙋 needs you\n" + approval.marker(request), 1), note(2, "done", 2)]
+        self.mr_notes = []
+        self.pr = {"state": "OPEN", "headRefOid": HEAD, "baseRefName": "main", "body": "", "closingIssues": [3]}
+        self.calls = []
+        self.forge = approval.Forge("cfg.json", self.project)
+        def run(*args):
+            self.calls.append(args)
+            verb = args[0]
+            if verb == "pr-view":
+                return json.dumps(self.pr)
+            if verb == "default-branch":
+                return "main\n"
+            if verb == "permission":
+                return "maintain\n"
+            if verb == "issue-comments":
+                return json.dumps(self.issue_notes if args[1] == "3" else [])
+            if verb == "pr-comments":
+                return json.dumps(self.mr_notes)
+            raise AssertionError(args)
+        self.forge.run = run
+
+    def test_done_on_linked_issue_approves_through_forge_verbs(self):
+        self.assertTrue(self.forge.check(9, HEAD, self.scope)["approved"])
+        self.assertIn(("pr-comments", "9"), self.calls)
+        self.assertIn(("permission", "owner"), self.calls)
+
+    def test_done_on_the_mr_does_not_answer_the_issue_request(self):
+        # MR !9 and issue #9 are different objects: the reply must sit under the request.
+        self.mr_notes = [self.issue_notes[1] | {"id": 7, "createdAt": "2026-10-03T00:00:05Z",
+                                               "updatedAt": "2026-10-03T00:00:05Z"}]
+        self.issue_notes = self.issue_notes[:1]
+        self.assertFalse(self.forge.check(9, HEAD, self.scope)["approved"])
+
+    def test_edited_reply_and_moved_head_hold(self):
+        self.issue_notes[1]["updatedAt"] = "2026-10-03T00:00:09Z"
+        self.assertFalse(self.forge.check(9, HEAD, self.scope)["approved"])
+        self.assertTrue(self.forge.check(9, "b" * 40, self.scope).get("headChanged"))
+
+    def test_missing_verb_never_approves(self):
+        def broken(*args):
+            raise ValueError("forge permission failed")
+        self.forge.run = broken
+        with self.assertRaises(ValueError):
+            self.forge.check(9, HEAD, self.scope)
+
+    def test_reader_picks_forge_from_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "c.json"
+            cfg.write_text(json.dumps({"forge": "gitlab", "gitlab": {"project": self.project}}))
+            args = type("A", (), {"config": str(cfg), "repo": ""})()
+            self.assertIsInstance(approval.reader(args), approval.Forge)
+            args.config, args.repo = None, "x/y"
+            self.assertIsInstance(approval.reader(args), approval.GitHub)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ Super Build is the canonical builder. Do not use a separate `build-feature` work
 
 Super Build may implement, test, commit, push, open PRs, and move project cards to `QA`. It never merges, closes issues, or moves cards to `Done` — the Reviewer does that through the merge gate. It should not invent new product scope beyond the issue body. If the issue needs product/design/security judgment, apply the human-gate or WIP-partial path instead of guessing.
 
-**GitHub budget** — every "move card" is `.claude/bin/super-board-card.sh --config <cfg> move <N> <Status>` (1 GraphQL point; `gh project item-list` / `field-list` cost ~100–200). Comments, labels and PR reads go over REST; [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the calls.
+**GitHub budget** — every "move card" is `.claude/bin/super-board-forge.sh --config <cfg> move <N> <Status>` (GitHub: 1 GraphQL point via super-board-card.sh; a raw project item-list / field-list costs ~100–200). Every issue, comment, label and PR call is a verb of the same script (`.claude/bin/super-board-forge.sh help` lists them); [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the costs.
 
 ## Configuration
 
@@ -52,11 +52,11 @@ Source column is `Ready` (override with `BUILD_LOOP_SOURCE_COLUMN`):
 ```bash
 SOURCE_COLUMN="${BUILD_LOOP_SOURCE_COLUMN:-Ready}"
 
-.claude/bin/super-board-card.sh --owner "$BUILD_LOOP_OWNER" --number "$BUILD_LOOP_PROJECT" items \
+.claude/bin/super-board-forge.sh items \
   | jq --arg col "$SOURCE_COLUMN" '.items[] | select(.status == $col and .content.type == "Issue")'
 ```
 
-`super-board-card.sh items` is the `gh project item-list` shape for ~1 GraphQL point per 100 cards (item-list spends 101) — without bodies.
+`.claude/bin/super-board-forge.sh items` reads the board named by `BUILD_LOOP_OWNER` / `BUILD_LOOP_PROJECT` (add `--config <cfg>` under super-board) in the project item-list shape, for ~1 GraphQL point per 100 cards on GitHub (a raw item-list spends 101) — without bodies.
 
 For each Ready item:
 - Capture `content.number` (issue #), `content.title` and `labels`; read the body over REST: `gh api repos/{owner}/{repo}/issues/<N> --jq .body`.
@@ -99,12 +99,13 @@ For each issue N in the ready set (up to the cap at a time):
 
 a. **Lock the issue:**
 ```bash
-gh issue edit N --add-label loop:in-progress
+.claude/bin/super-board-forge.sh issue-edit N --add-label loop:in-progress
 ```
 
 b. **Announce on the issue** (so a human reading the issue page knows it's being worked):
 ```bash
-gh issue comment N --body "🤖 Dispatched by /super-build — worker spinning up in worktree \`.claude/worktrees/issue-N\` on branch \`loop/issue-N\`. Skills: <skills-line-from-body-or-defaults>."
+printf '%s\n' "🤖 Dispatched by /super-build — worker spinning up in worktree \`.claude/worktrees/issue-N\` on branch \`loop/issue-N\`. Skills: <skills-line-from-body-or-defaults>." > /tmp/dispatch-N.md
+.claude/bin/super-board-forge.sh issue-comment N /tmp/dispatch-N.md
 ```
 
 c. **Dispatch:**
@@ -115,7 +116,7 @@ bash .claude/skills/super-build/scripts/super-build-dispatch.sh N
 
 The dispatcher (this skill's `scripts/super-build-dispatch.sh`) handles:
 - `git worktree add -b loop/issue-N .claude/worktrees/issue-N <base-branch>`
-- `gh issue view N --json title,body,labels` to compose the worker prompt
+- reads the issue title, body and labels (bounded read helper) to compose the worker prompt
 - prepend `references/worker-preamble.md` + append working-directory footer
 - `cd` into worktree and exec `claude -p --dangerously-skip-permissions --output-format stream-json --verbose --max-turns 250`
 - verify the worker produced a `🔧 [chore] loop: close #N` commit on its branch
@@ -133,9 +134,9 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 
 **On dispatcher exit 0 (success):**
 - `git -C .claude/worktrees/issue-N push -u origin loop/issue-N`
-- `gh pr create --draft --base <base-branch> --head loop/issue-N --title "<emoji> [<type>] <scope>: <subject>" --body-file <body.md>` — title in commit-subject format, body = the marker-block template from `skills/super-board/references/run.md` (writing-standard.md § 2), `Closes #N` in the status card, `Docs:` bullets in Solution
-- `gh issue edit N --remove-label loop:in-progress`
-- `gh issue comment N --body "[builder] [report] ✅ built · PR <URL>"` (Next line: `qa`)
+- `.claude/bin/super-board-forge.sh pr-create --draft --base <base-branch> --head loop/issue-N --title "<emoji> [<type>] <scope>: <subject>" --body-file <body.md>` — title in commit-subject format, body = the marker-block template from `skills/super-board/references/run.md` (writing-standard.md § 2), `Closes #N` in the status card, `Docs:` bullets in Solution
+- `.claude/bin/super-board-forge.sh issue-edit N --remove-label loop:in-progress`
+- `.claude/bin/super-board-forge.sh issue-comment N <file>` with the body `[builder] [report] ✅ built · PR <URL>` (Next line: `qa`)
 - Move the project card to `QA`. The Tester and Reviewer take it from there; the issue closes when the Reviewer merges through the merge gate.
 - Leave the worktree in place — the merge gate (after the merge) or the cleanup-wt SessionStart hook removes it once the work is on the base branch.
 - Report: `✅ Super Build issue #N → PR <URL>, card in QA`
@@ -143,22 +144,22 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 
 **On dispatcher exit 5 (intentional WIP-PARTIAL — open a partial PR, do NOT close):**
 - `git -C .claude/worktrees/issue-N push -u origin loop/issue-N`
-- `gh pr create --draft --base <base-branch> --head loop/issue-N --title "🚧 [wip] <scope>: <slice from worker's final message>"` — the status card says `Refs #N`, never `Closes`, so the merge does not close the issue.
-- `gh issue edit N --remove-label loop:in-progress --add-label human-gated`
-- `gh issue comment N --body "[builder] [report] ⚠️ partial · PR <URL>\nDid: <slice>\n❌ Not done: <worker's reason for stopping>\nNext: owner"` — the issue stays open with `human-gated` until the rest lands.
+- `.claude/bin/super-board-forge.sh pr-create --draft --base <base-branch> --head loop/issue-N --title "🚧 [wip] <scope>: <slice from worker's final message>" --body-file <body.md>` — the status card says `Refs #N`, never `Closes`, so the merge does not close the issue.
+- `.claude/bin/super-board-forge.sh issue-edit N --remove-label loop:in-progress --add-label human-gated`
+- `.claude/bin/super-board-forge.sh issue-comment N <file>` with the body `[builder] [report] ⚠️ partial · PR <URL>\nDid: <slice>\n❌ Not done: <worker's reason for stopping>\nNext: owner` — the issue stays open with `human-gated` until the rest lands.
 - Report: `🟡 Issue #N partial PR opened — issue stays open (human-gated)`
 - **Continue dispatching the next issue in the wave.** A WIP-PARTIAL is NOT a halt. The worker did intentional, scoped work and the orchestrator advances.
 
 **On dispatcher exit 2 or 3 (worker failed or no done-commit):**
-- `gh issue edit N --remove-label loop:in-progress`
-- `gh issue comment N --body "[builder] [report] ❌ failed · exit <X>\nDid: worker ran; worktree \`.claude/worktrees/issue-N\` kept\n❌ Not done: <one line from the log>\nNext: owner\n\n<details><summary>log tail</summary>\n\n\`\`\`\n$(tail -50 .planning/super-build-logs/issue-N.log)\n\`\`\`\n</details>"`
+- `.claude/bin/super-board-forge.sh issue-edit N --remove-label loop:in-progress`
+- `.claude/bin/super-board-forge.sh issue-comment N <file>` with the body "[builder] [report] ❌ failed · exit <X>\nDid: worker ran; worktree \`.claude/worktrees/issue-N\` kept\n❌ Not done: <one line from the log>\nNext: owner\n\n<details><summary>log tail</summary>\n\n\`\`\`\n$(tail -50 .planning/super-build-logs/issue-N.log)\n\`\`\`\n</details>"`
 - Report to the user with `tail -50` of `.planning/super-build-logs/issue-N.log`
 - Do NOT open a PR; leave the worktree intact for human inspection
 - Halt the loop
 
 **On dispatcher exit 4 (HUMAN GATE TRIPPED):**
-- `gh issue edit N --remove-label loop:in-progress --add-label human-gated`
-- `gh issue comment N --body "🔴 HUMAN GATE TRIPPED — needs manual handling. See worktree \`.claude/worktrees/issue-N\`."`
+- `.claude/bin/super-board-forge.sh issue-edit N --remove-label loop:in-progress --add-label human-gated`
+- `.claude/bin/super-board-forge.sh issue-comment N <file>` with the body "🔴 HUMAN GATE TRIPPED — needs manual handling. See worktree \`.claude/worktrees/issue-N\`."
 - Report: `🔴 Issue #N tripped HUMAN GATE — needs manual handling`
 - Halt the loop
 
@@ -202,7 +203,7 @@ The preamble at `references/worker-preamble.md` is the worker contract: decision
 ## Recovery / re-entry
 
 If the user invokes `/super-build` after a partial run:
-- Re-read `gh issue list`. Issues already closed are skipped automatically.
+- Re-read `.claude/bin/super-board-forge.sh issue-list`. Issues already closed are skipped automatically.
 - If legacy `.worktrees/issue-N` exists, stop and inspect it before dispatch. Preserve edits and use `git worktree move` to the matching `.claude/worktrees/issue-N` path; never delete the old folder to make a fresh dispatch fit.
 - If `.claude/worktrees/issue-N` exists for an N that's still open: a previous worker was interrupted. Default: notify the user and ask before auto-resuming (a re-dispatch overwrites the previous attempt's branch).
 - If the `loop:in-progress` label is set on issue N but no worktree exists: stale lock from a crashed orchestrator. Remove the label and treat as ready.

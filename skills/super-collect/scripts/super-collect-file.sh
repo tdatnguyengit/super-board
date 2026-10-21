@@ -97,6 +97,8 @@ fi
 
 # Router-owned duplicate/adopt writes share the same halt as the child filers.
 GITHUB_READ="$BIN/super-board-github-read.py"
+# Issue writes go through the forge (labels, comments).
+forge() { bash "$BIN/super-board-forge.sh" --config "$CONFIG" "$@"; }
 python3 "$GITHUB_READ" --check || exit $?
 REPO_NAME="${REPO_FLAG[1]:-}"
 if [ -z "$REPO_NAME" ]; then
@@ -170,7 +172,7 @@ tag() { # $1 = issue number, rest = labels; best-effort
   done
   for l in "$@"; do
     python3 "$GITHUB_READ" --check || return $?
-    gh issue edit "$n" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --add-label "$l" >/dev/null 2>&1 || echo "warn: could not label #${n} ${l}" >&2
+    forge issue-edit "$n" --add-label "$l" >/dev/null 2>&1 || echo "warn: could not label #${n} ${l}" >&2
   done
   return 0
 }
@@ -213,9 +215,10 @@ if [ -n "$OPEN_HIT" ]; then
   SEEN=$(state seen "$OPEN_HIT") || exit $?
   if [ "$SEEN" = unchanged ]; then echo "$OPEN_HIT"; exit 0; fi
   state begin "$OPEN_HIT" || exit $?
-  gh issue comment "$OPEN_HIT" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --body "Seen again by super-collect (${SOURCE}).
-
-$(cat "$BODY_FILE")" >/dev/null 2>&1 || { python3 "$GITHUB_READ" --halt "Collector comment outcome unknown for #${OPEN_HIT}; reconcile before retrying"; echo "$OPEN_HIT"; exit 79; }
+  SEEN_TMP=$(mktemp)
+  printf 'Seen again by super-collect (%s).\n\n%s\n' "$SOURCE" "$(cat "$BODY_FILE")" > "$SEEN_TMP"
+  forge issue-comment "$OPEN_HIT" "$SEEN_TMP" >/dev/null 2>&1 || { rm -f "$SEEN_TMP"; python3 "$GITHUB_READ" --halt "Collector comment outcome unknown for #${OPEN_HIT}; reconcile before retrying"; echo "$OPEN_HIT"; exit 79; }
+  rm -f "$SEEN_TMP"
   state success "$OPEN_HIT" || exit $?
   echo "$OPEN_HIT"; exit 0
 fi

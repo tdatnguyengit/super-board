@@ -88,7 +88,7 @@ on missing requirements and recheck each conditional helper before use.
       - **Spec is not implementation.** If `docs/specs/<…>-design.md` already exists on the base branch, that's the design. The issue's acceptance criteria are about the IMPLEMENTATION the spec describes (schema + routes + service + UI + i18n + migration + tests). Only `🔧 [chore] loop: close` if those AC checkboxes are filled by THIS branch's diff. A spec amendment alone is NOT a `🔧 [chore] loop: close` — at most it is a `🚧 [wip] loop:` (and usually it's no commit at all).
       - **Anti-loophole.** If your branch's diff against the base is < 50 lines of non-spec code, OR contains zero new files under `server/`, `client/`, `shared/db/`, or `shared/zod/`, do NOT emit `🔧 [chore] loop: close` regardless of how the issue body reads. Either commit `🚧 [wip] loop:` with `WIP-PARTIAL:` prefix as above, or do not commit at all and surface the situation in the final assistant message.
       - **Do not edit the issue body.** Acceptance-criterion checkboxes are the orchestrator's source of truth; rewriting them to "look done" is gaming the contract.
-   c. Stop. Do **NOT** run `gh issue close`, do **NOT** remove the `loop:in-progress` label, do **NOT** comment on the issue — the orchestrator handles all of that after merging your branch.
+   c. Stop. Do **NOT** close the issue, do **NOT** remove the `loop:in-progress` label, do **NOT** comment on the issue — the orchestrator handles all of that after merging your branch.
    d. Do **NOT** advance to another issue. The orchestrator handles dispatch.
 
 ## Failure mode

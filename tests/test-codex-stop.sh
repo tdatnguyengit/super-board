@@ -44,7 +44,7 @@ done
 wait "$wave_pid"
 wave_pid=""
 [ "$(head -1 "$STOP_TRACE")" = wave-stopped ] || { echo 'FAIL: claims released before wave stopped'; exit 1; }
-grep -q '^gh issue comment 12 ' "$STOP_TRACE" || { echo 'FAIL: numeric issue not wrapped up'; exit 1; }
+grep -q '^gh api repos/.*/issues/12/comments ' "$STOP_TRACE" || { echo 'FAIL: numeric issue not wrapped up'; exit 1; }
 if grep -q 'workflow-wave.lock\|merge.lock' "$STOP_TRACE"; then
   echo 'FAIL: control marker treated as an issue'; exit 1
 fi

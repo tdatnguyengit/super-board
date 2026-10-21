@@ -10,7 +10,7 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 | Board state / halt | `/super-board status` · `/super-board stop` | |
 | Build one ticket | `/super-build` | NEVER build outside the card's worktree |
 | QA a branch, or a live URL alone | `/super-qa` · `/super-qa <url>` | NEVER mark QA pass without evidence |
-| Review a PR, merge | `/super-review` | NEVER `gh pr merge` direct — merge gate only |
+| Review a PR, merge | `/super-review` | NEVER merge directly — merge gate only |
 | File bugs from Sentry, PostHog, PRs | `/super-collect` | DON'T file without a verifier pass |
 | UI polish | `/ui-refine-loop` (human runs it) | board NEVER runs it |
 | Diagram / explainer page | `/visual` | |

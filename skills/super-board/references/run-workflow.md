@@ -121,7 +121,7 @@ Run the same preconditions as `run.md` §Preconditions, minus PID checks:
 6. Crash-recovery sweep (the workflow backend's equivalent of the legacy
    reaper): with no wave running, strip `bot_identity` from any
    Review/QA/Ready/Building card that still carries it
-   (`gh issue edit <n> --remove-assignee <bot_identity>`). A crashed
+   (`.claude/bin/super-board-forge.sh --config <cfg> release <n> <bot_identity>`). A crashed
    orchestrator releases nothing — leaked assignees make the planner skip
    those cards forever and the board silently stops draining.
 7. Database reach: for every env in `migrations.allowed_envs` with a command, run its read-only
@@ -236,12 +236,12 @@ Repeat until a done condition or halt gate fires:
    after a wave that hit the hourly limit. If `cards` is empty and
    Building/QA/Review counts are 0 → done. If empty but cards sit in Blocked
    only → report and stop. This is unfinished work, not a completed-run calibration trigger.
-3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
-   then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
-   proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee
-   does NOT fail when someone else already claimed (issues accept up to 10
-   assignees), so the add alone is not a mutex — on any other assignee set,
-   remove own assignee and skip the card (race lost). Skipped when
+3. **Claim** — for each card, `.claude/bin/super-board-forge.sh --config <cfg> claim <n> <bot_identity>`. It adds the
+   assignee, then VERIFIES: re-reads assignees and exits 0 only if the list is
+   exactly `[<bot_identity>]`. Adding an assignee does NOT fail when someone
+   else already claimed (issues accept up to 10 assignees), so the add alone is
+   not a mutex — on any other assignee set it removes its own assignee and exits
+   2 with the holder's login: skip the card (race lost). Skipped when
    bot_identity is unset — accepted single-orchestrator risk: without it
    there is no cross-session claim at all, so never run two orchestrators
    (or /loop re-entries) against the same board without bot_identity.
@@ -263,7 +263,7 @@ Repeat until a done condition or halt gate fires:
    `verify_commands` and restart explicitly; do not invoke GitHub evidence recovery.
    For a GitHub read halt, follow "Required GitHub evidence" above. Otherwise,
    for EVERY card in the wave, release the assignee
-   (`gh issue edit <n> --remove-assignee <bot_identity>`, idempotent).
+   (`.claude/bin/super-board-forge.sh --config <cfg> release <n> <bot_identity>`, idempotent).
    Append one line per card to the run manifest
    `docs/super-board/runs/<date>-<slug>.md`:
    `| #N | <lanesRun> | <finalStatus> | <column> | <detail> |`.
@@ -330,7 +330,7 @@ don't stall on prompts:
     "Bash(gh pr view:*)", "Bash(gh pr diff:*)", "Bash(gh pr checks:*)", "Bash(gh pr comment:*)",
     "Bash(gh pr create:*)", "Bash(gh pr ready:*)", "Bash(gh project item-edit:*)",
     "Bash(gh project item-list:*)", "Bash(gh api:*)", "Bash(git worktree:*)",
-    "Bash(.claude/bin/super-board-card.sh:*)",
+    "Bash(.claude/bin/super-board-card.sh:*)", "Bash(.claude/bin/super-board-forge.sh:*)",
     "Bash(git checkout:*)", "Bash(git add:*)", "Bash(git commit:*)",
     "Bash(git push:*)", "Bash(git pull:*)", "Bash(git fetch:*)", "Bash(git blame:*)",
     "Bash(mkdir:*)", "Bash(pgrep:*)", "Bash(node --check:*)",
