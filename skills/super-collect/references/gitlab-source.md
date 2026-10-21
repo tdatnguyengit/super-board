@@ -7,7 +7,7 @@ from the config's `forge_host` and `gitlab.project`.
 
 | Source | Fetch on GitLab | Shape |
 |---|---|---|
-| `github` | `python3 $S/collect_gitlab.py issues [--max 300]` | `{"source":"github","forge":"gitlab","truncated",issues:[{number,title,body,labels:[{name}],url}]}`: the same fields as `gh issue list --json number,title,body,labels,url`. `number` is the issue IID. |
+| `github` | `python3 $S/collect_gitlab.py issues [--max 300]` | `{"source":"github","forge":"gitlab","truncated",issues:[{number,title,body,labels:[{name}],url}]}`: the same fields as the GitHub issues source (`number,title,body,labels,url`). `number` is the issue IID. |
 | `prs` | `python3 $S/collect_gitlab.py mrs --since <w> [--max 200]` | the `collect_prs.py` shape: `prs:[{number,title,url,mergedAt,author:{login,bot},comments,reviews,threads}]`. General MR notes are `comments`; diff discussions are `threads` (`path`, `resolved`); system notes are dropped; `reviews` is empty because GitLab approvals have no text. |
 
 Everything after the fetch is unchanged: filter out issues already on the board and `source:*`

@@ -5,7 +5,7 @@ Same candidates as the GitHub side, read through super-board-gitlab-read.py
 (`glab api` only, bounded retries):
 
     collect_gitlab.py issues [--max 300] [--project grp/app] [--config cfg.json]
-        open issues as `gh issue list --json number,title,body,labels,url` would
+        open issues with the GitHub issues source's fields (number,title,body,labels,url)
         give them: {"source":"github","forge":"gitlab","issues":[{number,title,body,labels:[{name}],url}]}
     collect_gitlab.py mrs [--since 14d|YYYY-MM-DD] [--max 200] [--project grp/app] [--config cfg.json]
         merged MRs in the window with every non-system note, in collect_prs.py's shape:
