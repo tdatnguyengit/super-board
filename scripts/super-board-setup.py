@@ -27,7 +27,11 @@ What `fix` does, with NO question (all of it backed up first to
   - `git init` when the folder is not a repo
   - adds Matt Pocock's helper skills with npx when Node is present and they are missing
 It never installs a system tool or signs in: those come back in `needs` with the exact
-command for this OS, for onboard to ask about.
+command for this OS, for onboard to ask about. `gh` is needed only when a config's
+`forge` is github (or absent), `glab` only when it is gitlab; for gitlab, `check` also
+asks `glab auth status --hostname <forge_host>` and returns `glab auth login --hostname
+<host>` as a `kind: "auth"` need when it fails. No config yet → the origin remote decides
+(super-board-forge-detect.sh), else github.
 
 `board-migrate` is the board half (needs `gh` with project scope): adds the missing
 Status options (--prune-empty also drops unused extras such as a new board's Todo),
@@ -73,7 +77,7 @@ OLD_LABELS = {
 }
 SKILLS = ["super-board", "super-build", "super-qa", "super-review", "super-collect", "visual", "git-sync", "ui-refine-loop"]
 OLD_SKILL_DIRS = ["super-refine", "cleanup-wt", "arch-loop"]
-BIN = ["super-board-forge.sh", "super-board-forge-github.sh", "super-board-forge-gitlab.sh", "super-board-forge-gitlab-board.sh", "super-board-forge-gitlab-mr.sh", "super-board-gitlab-read.py", "super-board-project-verifier.py", "super-board-skills-ready.py", "super-board-host.sh", "super-board-codex-wave.sh", "super-board-codex-lane.sh", "super-board-calibration.py", "super-board-verification-ready.py", "super-board-github-read.py", "super-board-collect-state.py", "super-board-run.sh", "super-board-gh-guard.sh", "super-board-card.sh", "super-board-status.py", "super-board-wave-plan.sh",
+BIN = ["super-board-forge.sh", "super-board-forge-detect.sh", "super-board-forge-github.sh", "super-board-forge-gitlab.sh", "super-board-forge-gitlab-board.sh", "super-board-forge-gitlab-mr.sh", "super-board-gitlab-read.py", "super-board-project-verifier.py", "super-board-skills-ready.py", "super-board-host.sh", "super-board-codex-wave.sh", "super-board-codex-lane.sh", "super-board-calibration.py", "super-board-verification-ready.py", "super-board-github-read.py", "super-board-collect-state.py", "super-board-run.sh", "super-board-gh-guard.sh", "super-board-card.sh", "super-board-status.py", "super-board-wave-plan.sh",
        "super-board-deps.sh", "super-board-preflight.sh", "super-board-merge-gate.sh",
        "super-board-merge-policy.py", "super-board-approval.py", "super-board-env-check.sh", "super-board-agents-md.py",
        "super-board-settings.py", "super-board-setup.py", "super-board-usage.sh", "super-board-pr-body.sh",
@@ -87,6 +91,10 @@ TOOLS = {
             "dnf": "sudo dnf install -y git", "win": "winget install --id Git.Git -e"}),
     "gh": ("reads and moves cards on GitHub", {"mac": "brew install gh", "apt": "sudo apt-get install -y gh",
            "dnf": "sudo dnf install -y gh", "win": "winget install --id GitHub.cli -e"}),
+    # Only when a config (or the origin remote, before onboarding) says forge "gitlab".
+    # Linux packages per https://gitlab.com/gitlab-org/cli#installation.
+    "glab": ("reads and moves cards on GitLab", {"mac": "brew install glab", "apt": "sudo apt-get install -y glab",
+             "dnf": "sudo dnf install -y glab", "win": "winget install --id GLab.GLab -e"}),
     "jq": ("the board scripts read JSON with it", {"mac": "brew install jq", "apt": "sudo apt-get install -y jq",
            "dnf": "sudo dnf install -y jq", "win": "winget install --id jqlang.jq -e"}),
     "node": ("the helper installer; actual skill files are checked separately",
@@ -323,13 +331,17 @@ def check(root, pack, host="claude", home=None, catalog=None):
     from_v = upgrade_rec.get("from") or (have_v if have_v and pack_version and vtuple(have_v) < vtuple(pack_version) else None)
     fam = os_family()
     needs = []
-    for t in ("git", "gh", "jq", "node"):
+    forges = project_forges(root)
+    tools = ["git"] + (["gh"] if "github" in forges else []) + (["glab"] if "gitlab" in forges else []) + ["jq", "node"]
+    for t in tools:
         if not have(t if t != "node" else "npx"):
             why, cmds = TOOLS[t]
             cmd = cmds[fam]
             if t == "node":
                 cmd += " && " + HELPERS_CMD
             needs.append({"kind": "tool", "name": t, "why": why, "command": cmd})
+    if "gitlab" in forges and have("glab"):
+        needs += glab_needs(sorted(forges["gitlab"]), fam)
     readiness = helper_readiness(root, host, home, catalog)
     helpers = readiness["ready"]
     git = is_git_repo(root)
@@ -351,6 +363,53 @@ def check(root, pack, host="claude", home=None, catalog=None):
         "host_errors": host_errors, "git": git,
         "helper_skills": helpers, "helper_readiness": readiness, "needs": needs, "os": fam, "ok": ok, "green": not red,
     }
+
+
+FORGE_HOSTS = {"github": "github.com", "gitlab": "gitlab.com"}
+MIN_GLAB = "1.36.0"
+
+
+def project_forges(root):
+    """{forge: {host, ...}} over every config; no config -> the origin remote, else github.
+
+    A config without `forge` is GitHub (v3.1.2 behaviour). Before onboarding writes a
+    config, super-board-forge-detect.sh reads origin so a GitLab project is not told to
+    install gh; any detection failure keeps the GitHub default.
+    """
+    forges = {}
+    for p in sorted(glob.glob(os.path.join(root, ".claude", "super-board", "configs", "*.json"))):
+        cfg = load_json(p)
+        if not isinstance(cfg, dict):
+            continue
+        f = cfg.get("forge") or "github"
+        forges.setdefault(f, set()).add(cfg.get("forge_host") or FORGE_HOSTS.get(f, ""))
+    if not forges:
+        detect = os.path.join(os.path.dirname(os.path.abspath(__file__)), "super-board-forge-detect.sh")
+        try:
+            r = subprocess.run(["bash", detect, "--root", root], capture_output=True, text=True)
+            d = json.loads(r.stdout) if r.returncode == 0 else {}
+        except (OSError, ValueError):
+            d = {}
+        if d.get("forge") == "gitlab":
+            forges["gitlab"] = {d.get("forge_host") or "gitlab.com"}
+    return forges or {"github": {"github.com"}}
+
+
+def glab_needs(hosts, fam):
+    """glab is on PATH: is it new enough, and signed in to each GitLab host?"""
+    needs = []
+    r = run(["glab", "version"])
+    m = re.search(r"(\d+\.\d+\.\d+)", r.stdout or "") if r.returncode == 0 else None
+    if m and vtuple(m.group(1)) < vtuple(MIN_GLAB):
+        up = TOOLS["glab"][1][fam].replace(" install ", " upgrade ", 1)
+        needs.append({"kind": "tool", "name": "glab", "why": "reads and moves cards on GitLab",
+                      "message": f"glab {m.group(1)} is older than {MIN_GLAB}. Upgrade it.", "command": up})
+    for host in hosts:
+        if run(["glab", "auth", "status", "--hostname", host]).returncode:
+            needs.append({"kind": "auth", "name": "glab", "host": host, "why": f"reads and moves cards on {host}",
+                          "message": f"glab isn't signed in to {host} (token scope: api).",
+                          "command": f"glab auth login --hostname {host}"})
+    return needs
 
 
 def backup(root, paths, stamp):
@@ -469,7 +528,7 @@ def text_report(res):
     for path, error in {**res.get("verification", {}), **res.get("host_errors", {})}.items():
         lines.append(f"  ✗ {path}: {error}")
     for n in res.get("needs", []):
-        lines.append(f"  Needs your machine: {n['name']} isn't installed. It's needed for {n['why']}.")
+        lines.append("  Needs your machine: " + (n.get("message") or f"{n['name']} isn't installed. It's needed for {n['why']}."))
         lines.append(f"    {n['command']}")
     return "\n".join(lines)
 
