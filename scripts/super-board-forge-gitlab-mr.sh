@@ -62,7 +62,8 @@ GL_JQ_MR='
   def mr: {number: .iid, title: .title, body: (.description // ""), state: st,
            isDraft: ((.draft // .work_in_progress // false) == true),
            headRefName: .source_branch, baseRefName: .target_branch,
-           headRefOid: .sha, url: .web_url, mergeable: mergeable};
+           headRefOid: .sha, url: .web_url, mergeable: mergeable,
+           labels: (.labels // [])};
 '
 
 # GitLab default closing pattern, applied to a description (list rows only;
@@ -101,14 +102,19 @@ gl_pr_create() {
   jq -c '{number: .iid, url: .web_url}' <<<"$out"
 }
 
+# pr-view also carries the merge policy's size fields, counted from /diffs
+# (GitLab's own changes_count is a string capped at "1000+").
 gl_pr_view() {
   gl__num "${1:-}" || gl__usage "pr-view <pr>"
-  local mr closes
+  local mr closes diffs
   mr=$(gl__mr_get "$1") || exit $?
   closes=$(gl__paged "$(gl__mr_path "$1")/closes_issues") || exit $?
-  jq -c --argjson c "$closes" "$GL_JQ_MR"'
+  diffs=$(gl__paged "$(gl__mr_path "$1")/diffs") || exit $?
+  jq -c --argjson c "$closes" --argjson d "$diffs" "$GL_JQ_MR"'
+    def count($re): [ $d[] | (.diff // "") | split("\n")[] | select(test($re)) ] | length;
     .project_id as $p
-    | mr + {closingIssues: ([$c[] | select((.project_id // $p) == $p) | .iid] | unique)}' <<<"$mr"
+    | mr + {closingIssues: ([$c[] | select((.project_id // $p) == $p) | .iid] | unique),
+            additions: count("^\\+"), deletions: count("^-"), changedFiles: ($d | length)}' <<<"$mr"
 }
 
 gl_pr_list() {

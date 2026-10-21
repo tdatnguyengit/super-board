@@ -64,26 +64,32 @@ mr_json() { # iid state draft-key draft detailed
 routes "{
   \"GET $MR/1\": {\"body\": $(mr_json 1 opened draft true conflict)},
   \"GET $MR/1/closes_issues?$PG\": {\"body\": [{\"iid\": 12, \"project_id\": 5}, {\"iid\": 3, \"project_id\": 99}, {\"iid\": 4, \"project_id\": 5}]},
+  \"GET $MR/1/diffs?$PG\": {\"body\": [{\"diff\": \"@@ -1,2 +1,3 @@\\n a\\n-b\\n+c\\n+d\\n\"}, {\"diff\": \"@@ -0,0 +1 @@\\n+e\\n\"}]},
   \"GET $MR/2\": {\"body\": $(mr_json 2 merged work_in_progress false not_open)},
   \"GET $MR/2/closes_issues?$PG\": {\"body\": []},
+  \"GET $MR/2/diffs?$PG\": {\"body\": []},
   \"GET $MR/3\": {\"body\": $(mr_json 3 closed draft false mergeable)},
   \"GET $MR/3/closes_issues?$PG\": {\"body\": []},
+  \"GET $MR/3/diffs?$PG\": {\"body\": []},
   \"GET $MR/4\": {\"body\": $(mr_json 4 locked draft false need_rebase)},
   \"GET $MR/4/closes_issues?$PG\": {\"body\": []},
+  \"GET $MR/4/diffs?$PG\": {\"body\": []},
   \"GET $MR/5\": {\"body\": $(mr_json 5 opened draft false mergeable)},
   \"GET $MR/5/closes_issues?$PG\": {\"body\": []},
+  \"GET $MR/5/diffs?$PG\": {\"body\": []},
   \"GET $MR/6\": {\"body\": $(mr_json 6 opened draft false ci_still_running)},
-  \"GET $MR/6/closes_issues?$PG\": {\"body\": []}
+  \"GET $MR/6/closes_issues?$PG\": {\"body\": []},
+  \"GET $MR/6/diffs?$PG\": {\"body\": []}
 }"
 OUT=$(forge pr-view 1)
-[ "$OUT" = '{"number":1,"title":"t1","body":"d","state":"OPEN","isDraft":true,"headRefName":"sb/issue-1","baseRefName":"main","headRefOid":"abc1","url":"u1","mergeable":"CONFLICTING","closingIssues":[4,12]}' ] \
+[ "$OUT" = '{"number":1,"title":"t1","body":"d","state":"OPEN","isDraft":true,"headRefName":"sb/issue-1","baseRefName":"main","headRefOid":"abc1","url":"u1","mergeable":"CONFLICTING","labels":[],"closingIssues":[4,12],"additions":3,"deletions":1,"changedFiles":2}' ] \
   || fail "pr-view 1: $OUT"
 [ "$(forge pr-view 2 | jq -r '[.state, .isDraft, .mergeable] | join(" ")')" = 'MERGED false UNKNOWN' ] || fail "pr-view merged"
 [ "$(forge pr-view 3 | jq -r '[.state, .mergeable] | join(" ")')" = 'CLOSED MERGEABLE' ] || fail "pr-view closed"
 [ "$(forge pr-view 4 | jq -r '[.state, .mergeable] | join(" ")')" = 'CLOSED CONFLICTING' ] || fail "pr-view locked"
 [ "$(forge pr-view 5 | jq -r '[.state, .isDraft, .mergeable] | join(" ")')" = 'OPEN false MERGEABLE' ] || fail "pr-view mergeable"
 [ "$(forge pr-view 6 | jq -r .mergeable)" = UNKNOWN ] || fail "pr-view unknown status"
-ok "pr-view: states, draft, head sha, mergeable, closingIssues (this project only)"
+ok "pr-view: states, draft, head sha, mergeable, closingIssues (this project only), size from /diffs"
 
 # ── pr-diff: unified diff rebuilt from paged /diffs ──────────────────────
 routes "{
@@ -248,7 +254,7 @@ routes "{\"GET $MR?state=merged&source_branch=sb%2Fissue-12&search=fix%20x&$PG\"
   \"GET $MR?state=opened&per_page=2&page=1\": {\"body\": [{\"iid\": 1}, {\"iid\": 2}]},
   \"GET $MR?state=opened&per_page=2&page=2\": {\"body\": [{\"iid\": 3}, {\"iid\": 4}]}}"
 OUT=$(forge pr-list --state merged --head sb/issue-12 --search 'fix x')
-[ "$OUT" = '[{"number":8,"title":"t","state":"MERGED","isDraft":false,"headRefName":"sb/issue-12","baseRefName":"main","headRefOid":"s","url":"u","mergeable":"UNKNOWN","closingIssues":[12,13]}]' ] \
+[ "$OUT" = '[{"number":8,"title":"t","state":"MERGED","isDraft":false,"headRefName":"sb/issue-12","baseRefName":"main","headRefOid":"s","url":"u","mergeable":"UNKNOWN","labels":[],"closingIssues":[12,13]}]' ] \
   || fail "pr-list: $OUT"
 [ "$(SB_GL_PER_PAGE=2 forge pr-list --limit 3 | jq -c '[.[].number]')" = '[1,2,3]' ] || fail "pr-list limit"
 ok "pr-list: state/head/search filters, no body, --limit across pages"
