@@ -55,6 +55,9 @@ Scripts live in `.claude/skills/super-collect/scripts/` (`S=` below). Every fetc
 | `architecture` | read-only finder sub-agent (below) | one finding → `refactor`, fp `arch|<module>|<problem>` |
 | custom (`collect.custom[]`) | `python3 $S/collect_custom.py list --since <w>` — http and cli sources run in the script; an `mcp` source comes back `status: agent`: call that server's read/list tool yourself (read-only), then pipe its JSON into `collect_custom.py normalize --name <n>` | one candidate → `bug` (errors, incidents) or `feature` (requests), `--source custom`, fp `custom|<name>|<key>` (the script emits it) |
 
+On GitLab (config `forge: gitlab`) `github` and `prs` read through `python3 $S/collect_gitlab.py issues|mrs`
+instead, same candidate shape: see `references/gitlab-source.md`.
+
 ### custom sources
 
 Added in onboard's "➕ Add another source" (`super-board onboard` → 📥 Bug sources): the user types a
