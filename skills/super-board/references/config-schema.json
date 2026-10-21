@@ -46,7 +46,10 @@
     "column_label_prefix": "sb::",
     // Filled by onboarding's GitLab board setup (super-board-gitlab-board-setup.sh);
     // informational, never required.
-    "board_id": null
+    "board_id": null,
+    // Merge gate: an MR must have a SUCCESS pipeline before it merges. `false` lets
+    // an MR with no pipeline at all merge (a FAILURE or PENDING one still waits).
+    "require_pipeline": true
   },
 
   // No `variant` (removed in v3.0.0). Every board has the same columns, and a

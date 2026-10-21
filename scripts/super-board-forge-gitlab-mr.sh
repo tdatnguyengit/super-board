@@ -63,7 +63,8 @@ GL_JQ_MR='
            isDraft: ((.draft // .work_in_progress // false) == true),
            headRefName: .source_branch, baseRefName: .target_branch,
            headRefOid: .sha, url: .web_url, mergeable: mergeable,
-           labels: (.labels // [])};
+           labels: (.labels // []),
+           mergeCommit: (if .state == "merged" then (.squash_commit_sha // .merge_commit_sha // .sha) else null end)};
 '
 
 # GitLab default closing pattern, applied to a description (list rows only;
@@ -177,7 +178,7 @@ gl_pr_comments() {
   local n
   n=$(gl__paged "$(gl__mr_path "$1")/notes?sort=asc&order_by=created_at") || exit $?
   jq -c '[ .[] | select(.system != true)
-           | {author: .author.username, body: .body, createdAt: .created_at} ]
+           | {id: (.id | tostring), author: .author.username, authorType: (if .author.bot == true then "Bot" else "User" end), body: .body, createdAt: .created_at, updatedAt: (.updated_at // .created_at)} ]
          | sort_by(.createdAt)' <<<"$n"
 }
 

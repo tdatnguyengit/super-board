@@ -94,6 +94,24 @@ gl_resolve_user() {
   printf '%s' "$u" | jq -r '"\(.id) \(.username)"'
 }
 
+# permission <login> → none|read|write|maintain|admin from the project
+# membership (inherited from groups too). GitLab has no triage role.
+gl_permission() {
+  [ $# -eq 1 ] || { echo "usage: permission <login>" >&2; return 64; }
+  local pid me id lvl
+  pid=$(gl_pid) || return $?
+  me=$(gl_resolve_user "$1") || { echo none; return 0; }
+  id=${me%% *}
+  lvl=$(sb_glab_api "projects/$pid/members/all/$id" 2>/dev/null | jq -r '.access_level // 0') || lvl=0
+  case "$lvl" in
+    50) echo admin ;;
+    40) echo maintain ;;
+    30) echo write ;;
+    0|"") echo none ;;
+    *) if [ "$lvl" -ge 10 ] 2>/dev/null; then echo read; else echo none; fi ;;
+  esac
+}
+
 # Every issue carrying a column label (open and closed), deduped by iid, sorted.
 gl_board_issues() {
   local pid col tmp all rc
@@ -237,7 +255,7 @@ gl_issue_comments() {
   pid=$(gl_pid) || return $?
   all=$(gl_get_all "projects/$pid/issues/$1/notes?sort=asc&order_by=created_at") || return $?
   printf '%s' "$all" | jq -c '[ .[] | select((.system // false) | not)
-                                | { author: .author.username, body, createdAt: .created_at } ]'
+                                | {id: (.id | tostring), author: .author.username, authorType: (if .author.bot == true then "Bot" else "User" end), body: .body, createdAt: .created_at, updatedAt: (.updated_at // .created_at)} ]'
 }
 
 gl_issue_comment() {

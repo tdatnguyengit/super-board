@@ -27,7 +27,8 @@ P='projects/grp%2Fsub%2Fapp'
 MR="$P/merge_requests"
 PG='per_page=100&page=1'
 
-forge() { bash "$FORGE" --config "$TMP/cfg.json" "$@"; }
+# The merge gate is the only caller allowed to merge; it sets SB_MERGE_GATE=1.
+forge() { SB_MERGE_GATE=1 bash "$FORGE" --config "$TMP/cfg.json" "$@"; }
 # routes '<json object>' — replaces the fake's routes and clears its log.
 routes() { printf '%s' "$1" > "$TMP/fake/routes.json"; : > "$TMP/fake/calls.log"; rm -f "$TMP/fake/.served.json"; }
 calls() { grep -c "\"method\": \"$1\", \"path\": \"$2\"" "$TMP/fake/calls.log" || true; }
@@ -82,7 +83,7 @@ routes "{
   \"GET $MR/6/diffs?$PG\": {\"body\": []}
 }"
 OUT=$(forge pr-view 1)
-[ "$OUT" = '{"number":1,"title":"t1","body":"d","state":"OPEN","isDraft":true,"headRefName":"sb/issue-1","baseRefName":"main","headRefOid":"abc1","url":"u1","mergeable":"CONFLICTING","labels":[],"closingIssues":[4,12],"additions":3,"deletions":1,"changedFiles":2}' ] \
+[ "$OUT" = '{"number":1,"title":"t1","body":"d","state":"OPEN","isDraft":true,"headRefName":"sb/issue-1","baseRefName":"main","headRefOid":"abc1","url":"u1","mergeable":"CONFLICTING","labels":[],"mergeCommit":null,"closingIssues":[4,12],"additions":3,"deletions":1,"changedFiles":2}' ] \
   || fail "pr-view 1: $OUT"
 [ "$(forge pr-view 2 | jq -r '[.state, .isDraft, .mergeable] | join(" ")')" = 'MERGED false UNKNOWN' ] || fail "pr-view merged"
 [ "$(forge pr-view 3 | jq -r '[.state, .mergeable] | join(" ")')" = 'CLOSED MERGEABLE' ] || fail "pr-view closed"
@@ -236,6 +237,9 @@ rc=0; forge pr-merge 7 --sha "$SHA" --rebase 2>/dev/null || rc=$?
 rc=0; forge pr-merge 7 --squash 2>/dev/null || rc=$?
 [ "$rc" = 64 ] || fail "missing --sha should be 64, got $rc"
 ok "pr-merge: --rebase unsupported and --sha required (exit 64)"
+rc=0; bash "$FORGE" --config "$TMP/cfg.json" pr-merge 7 --sha "$SHA" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 64 ] || fail "pr-merge without SB_MERGE_GATE: rc=$rc"
+ok "pr-merge: refused (64) outside the merge gate"
 
 # ── auth-check ───────────────────────────────────────────────────────────
 routes '{}'
@@ -254,7 +258,7 @@ routes "{\"GET $MR?state=merged&source_branch=sb%2Fissue-12&search=fix%20x&$PG\"
   \"GET $MR?state=opened&per_page=2&page=1\": {\"body\": [{\"iid\": 1}, {\"iid\": 2}]},
   \"GET $MR?state=opened&per_page=2&page=2\": {\"body\": [{\"iid\": 3}, {\"iid\": 4}]}}"
 OUT=$(forge pr-list --state merged --head sb/issue-12 --search 'fix x')
-[ "$OUT" = '[{"number":8,"title":"t","state":"MERGED","isDraft":false,"headRefName":"sb/issue-12","baseRefName":"main","headRefOid":"s","url":"u","mergeable":"UNKNOWN","labels":[],"closingIssues":[12,13]}]' ] \
+[ "$OUT" = '[{"number":8,"title":"t","state":"MERGED","isDraft":false,"headRefName":"sb/issue-12","baseRefName":"main","headRefOid":"s","url":"u","mergeable":"UNKNOWN","labels":[],"mergeCommit":"s","closingIssues":[12,13]}]' ] \
   || fail "pr-list: $OUT"
 [ "$(SB_GL_PER_PAGE=2 forge pr-list --limit 3 | jq -c '[.[].number]')" = '[1,2,3]' ] || fail "pr-list limit"
 ok "pr-list: state/head/search filters, no body, --limit across pages"
@@ -266,7 +270,7 @@ routes "{\"GET $MR/7/notes?sort=asc&order_by=created_at&$PG\": {\"body\": [
   \"GET $MR/7\": {\"body\": {\"iid\": 7, \"web_url\": \"https://g/mr/7\"}},
   \"POST $MR/7/notes\": {\"body\": {\"id\": 99}},
   \"GET $P\": {\"body\": {\"default_branch\": \"trunk\"}}}"
-[ "$(forge pr-comments 7)" = '[{"author":"owner","body":"done","createdAt":"2026-01-02T00:00:00Z"}]' ] || fail "pr-comments"
+[ "$(forge pr-comments 7 | jq -c '[.[] | {author, body, createdAt, authorType}]')" = '[{"author":"owner","body":"done","createdAt":"2026-01-02T00:00:00Z","authorType":"User"}]' ] || fail "pr-comments"
 printf 'hello\n' > "$TMP/c.md"
 [ "$(forge pr-comment 7 "$TMP/c.md")" = '{"url":"https://g/mr/7#note_99"}' ] || fail "pr-comment"
 [ "$(field POST "$MR/7/notes" body)" = hello ] || fail "pr-comment body"

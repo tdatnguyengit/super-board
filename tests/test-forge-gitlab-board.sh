@@ -219,7 +219,7 @@ NOTES='[{"id":1,"system":true,"body":"added ~sb::Ready","author":{"username":"bo
         {"id":3,"body":"again","author":{"username":"bob"},"created_at":"2026-10-03T00:00:00Z"}]'
 route "GET $P/issues/5/notes?sort=asc&order_by=created_at&per_page=100&page=1" "$NOTES"
 OUT=$(forge issue-comments 5)
-echo "$OUT" | jq -e '. == [{author:"alice",body:"hello",createdAt:"2026-10-02T00:00:00Z"},{author:"bob",body:"again",createdAt:"2026-10-03T00:00:00Z"}]' >/dev/null \
+echo "$OUT" | jq -e '. == [{id:"2",author:"alice",authorType:"User",body:"hello",createdAt:"2026-10-02T00:00:00Z",updatedAt:"2026-10-02T00:00:00Z"},{id:"3",author:"bob",authorType:"User",body:"again",createdAt:"2026-10-03T00:00:00Z",updatedAt:"2026-10-03T00:00:00Z"}]' >/dev/null \
   || fail "issue-comments: $OUT"
 printf 'line one\nline two\n' > "$TMP/body.md"
 route "POST $P/issues/5/notes" '{"id":42}'
@@ -304,5 +304,19 @@ for c in Backlog Ready Building QA Review Blocked; do route "$(q "$c")" '[]'; do
 RC=0; OUT=$("$SETUP" --config "$CFG" verify) || RC=$?
 [ "$RC" = 3 ] && echo "$OUT" | jq -e '.board_id == null and (.missing_labels | length) == 5' >/dev/null || fail "verify missing board/labels (rc=$RC): $OUT"
 ok "verify reports missing labels and board"
+
+# ── permission ──────────────────────────────────────────────────────────
+route "GET users?username=dev" '[{"id":31,"username":"dev"}]'
+route "GET $P/members/all/31" '{"id":31,"access_level":30}'
+route "GET users?username=boss" '[{"id":41,"username":"boss"}]'
+route "GET $P/members/all/41" '{"id":41,"access_level":40}'
+route "GET users?username=guest" '[{"id":11,"username":"guest"}]'
+route "GET $P/members/all/11" '{"id":11,"access_level":20}'
+route "GET users?username=stranger" '[{"id":99,"username":"stranger"}]'
+[ "$(forge permission dev)" = write ] || fail "permission developer"
+[ "$(forge permission boss)" = maintain ] || fail "permission maintainer"
+[ "$(forge permission guest)" = read ] || fail "permission reporter"
+[ "$(SB_GLAB_BACKOFF=0 forge permission stranger)" = none ] || fail "permission non-member"
+ok "permission: developer → write, maintainer → maintain, reporter → read, non-member → none"
 
 echo "PASS: $pass gitlab board checks"
