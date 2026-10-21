@@ -18,6 +18,10 @@
 # Usage:
 #   super-board-throttle.sh --config <cfg.json> [--results <file>] [--rate <rate_limit.json>] [--dry-run]
 #
+# GITLAB (config `forge: "gitlab"` or SB_FORGE=gitlab): GitLab's limit is per minute and read
+# by `super-board-forge.sh quota`; a hit is remaining 0 (a 429 reads as 0) or a lane result
+# naming a 429 / "Too Many Requests" / Retry-After. --rate then takes the quota verb's JSON.
+#
 # Stdout, one JSON line:
 #   {"hit":true,"why":"graphql remaining 0","from":3,"to":2,"wrote":true}
 # `from` 0 means unlimited; a hit on an unlimited config starts the ladder at 3.
@@ -36,6 +40,27 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$CONFIG" ] && [ -f "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 
+GH_LIMIT_RE='rate.?limit(ed)? (exceeded|hit|reached)|api rate limit|secondary rate limit|graphql.{0,40}(quota|rate.?limit)|was submitted too quickly'
+
+# GitLab (SB_FORGE, else the config's `forge`): the reading is the forge `quota` verb
+# ({remaining,…}, per-minute window; a 429 reads remaining 0), or the --rate file in that
+# shape. A lane result that failed with a GitLab 429 / "Too Many Requests" / Retry-After
+# is a hit too. Same ladder as GitHub.
+FORGE="${SB_FORGE:-$(jq -r '.forge // "github"' "$CONFIG" 2>/dev/null || echo github)}"
+if [ "$FORGE" = gitlab ]; then
+  if [ -n "$RATE" ]; then
+    PAYLOAD=$(cat "$RATE")
+  else
+    PAYLOAD=$(SB_FORGE=gitlab bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-forge.sh" --config "$CONFIG" quota 2>/dev/null || echo '{}')
+  fi
+  REMAINING=$(printf '%s' "$PAYLOAD" | jq -r '.remaining // "unknown"' 2>/dev/null || echo unknown)
+  WHY=""
+  [ "$REMAINING" = "0" ] && WHY="gitlab remaining 0"
+  if [ -z "$WHY" ] && [ -n "$RESULTS" ] && [ -f "$RESULTS" ] \
+     && grep -Eqi "$GH_LIMIT_RE"'|(http|status|error|code)[^0-9a-z]{0,3}429([^0-9]|$)|429 too many|too many requests|retry-after' "$RESULTS"; then
+    WHY="a lane result reports a GitLab rate-limit failure"
+  fi
+else
 if [ -n "$RATE" ]; then
   PAYLOAD=$(cat "$RATE")
 else
@@ -48,8 +73,9 @@ REMAINING=$(printf '%s' "$PAYLOAD" | jq -r '.resources.graphql.remaining // "unk
 WHY=""
 [ "$REMAINING" = "0" ] && WHY="graphql remaining 0"
 if [ -z "$WHY" ] && [ -n "$RESULTS" ] && [ -f "$RESULTS" ] \
-   && grep -Eqi 'rate.?limit(ed)? (exceeded|hit|reached)|api rate limit|secondary rate limit|graphql.{0,40}(quota|rate.?limit)|was submitted too quickly' "$RESULTS"; then
+   && grep -Eqi "$GH_LIMIT_RE" "$RESULTS"; then
   WHY="a lane result reports a GitHub rate-limit failure"
+fi
 fi
 
 FROM=$(jq -r '.max_workers // 0' "$CONFIG")
