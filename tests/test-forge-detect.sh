@@ -65,10 +65,26 @@ n=$((n + 1))
 
 # ── CLI checks. A curated PATH: no real gh or glab can leak in from the machine.
 BASE="$W/base"; mkdir -p "$BASE"
-for t in bash git jq uname grep sort head sed tr dirname cat env apt-get dnf; do
-  p=$(command -v "$t" || true); [ -n "$p" ] && ln -sf "$p" "$BASE/$t"
-done
-PY=$(python3 -c 'import sys; print(sys.executable)'); ln -sf "$PY" "$BASE/python3"
+PY=$(python3 -c 'import sys; print(sys.executable)')
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Git Bash's `ln -s` copies, and a copied bash.exe loses its DLLs: use the tools' own
+    # directories instead, after checking none of them carries a gh or glab.
+    BASE=""
+    for p in "$(command -v bash)" "$(command -v jq)" "$PY"; do
+      d=$(dirname "$p")
+      case ":$BASE:" in *":$d:"*) ;; *) BASE="${BASE:+$BASE:}$d" ;; esac
+    done
+    IFS=: read -r -a base_dirs <<<"$BASE"
+    for d in "${base_dirs[@]}"; do
+      for x in gh gh.exe glab glab.exe; do [ ! -e "$d/$x" ] || fail "curated PATH dir $d has $x"; done
+    done ;;
+  *)
+    for t in bash git jq uname grep sort head sed tr dirname cat env apt-get dnf; do
+      p=$(command -v "$t" || true); [ -n "$p" ] && ln -sf "$p" "$BASE/$t"
+    done
+    ln -sf "$PY" "$BASE/python3" ;;
+esac
 GLAB="$W/glab-bin"; mkdir -p "$GLAB"
 cat > "$GLAB/glab" <<EOF
 #!/usr/bin/env bash

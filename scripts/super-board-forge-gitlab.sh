@@ -51,7 +51,9 @@ sb_glab_api() {
   local attempt out rc
   for attempt in 1 2 3; do
     rc=0
-    out=$(glab api --hostname "$FORGE_HOST" "$@" 2>&1) || rc=$?
+    # Git Bash (MSYS) rewrites a /-prefixed argument such as `/user` into a Windows
+    # path before a native glab.exe sees it; both variables turn that off.
+    out=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' glab api --hostname "$FORGE_HOST" "$@" 2>&1) || rc=$?
     if [ "$rc" -eq 0 ]; then printf '%s\n' "$out"; return 0; fi
     if [ "$method" != GET ]; then echo "$out" >&2; return 69; fi
     [ "$attempt" -lt 3 ] && sleep "${SB_GLAB_BACKOFF:-$((attempt * 2))}"

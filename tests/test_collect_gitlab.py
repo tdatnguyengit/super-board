@@ -47,7 +47,8 @@ class CollectGitLab(unittest.TestCase):
         self.cfg = self.root / 'cfg.json'
         self.cfg.write_text(json.dumps({'forge': 'gitlab', 'forge_host': 'gl.example.com',
                                         'gitlab': {'project': 'grp/app'}}))
-        self.patch = {'PATH': f'{self.root}/bin:{os.environ["PATH"]}', 'FAKE_GLAB_DIR': str(self.root),
+        self.patch = {'PATH': f'{self.root / "bin"}{os.pathsep}{os.environ["PATH"]}', 'FAKE_GLAB_DIR': str(self.root),
+                      'SB_GLAB_CMD': json.dumps([sys.executable, str(FAKE)]),
                       'SB_GITLAB_RETRY_DELAY': '0', 'SB_GITLAB_READ': str(ROOT / 'scripts/super-board-gitlab-read.py')}
         self.saved = {k: os.environ.get(k) for k in [*self.patch, 'SB_GITLAB_PROJECT']}
         os.environ.update(self.patch)

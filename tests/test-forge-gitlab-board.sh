@@ -128,6 +128,10 @@ grep -q 'labels=sb%3A%3AReady&state=all.*page=3' "$TMP/glab/calls.log" && fail "
 ok "items: paged, deduped, Done = closed"
 
 # 5b — same cards on a GitHub board give the same items (super-board-card.sh).
+# The GitHub side reads through super-board-github-read.py, and Python on Windows cannot
+# start a bash `gh` shim, so this comparison runs off Windows only.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) SKIP_GH_PARITY=1 ;; *) SKIP_GH_PARITY=0 ;; esac
+if [ "$SKIP_GH_PARITY" = 0 ]; then
 cat > "$TMP/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 cat "$FAKE_GH_ITEMS"
@@ -145,6 +149,7 @@ GH_ITEM=$(echo "$GH" | jq -c '.items[0] | del(.id)')
  gh $GH_ITEM"
 [ "$(echo "$OUT" | jq -c 'keys')" = "$(echo "$GH" | jq -c 'keys')" ] || fail "top-level keys differ"
 ok "items match super-board-card.sh for the same card"
+fi
 
 # 6 — claim: free → assign + re-read; race lost → 2 + winner; held → 2; ours → 0.
 ME='{"id":7,"username":"alice"}'

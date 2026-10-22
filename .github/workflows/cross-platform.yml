@@ -95,9 +95,16 @@ jobs:
           echo "$RUNNER_TEMP/py3" >> "$GITHUB_PATH"
       - name: Run the GitLab suites
         shell: bash
+        env:
+          PYTHONUTF8: "1"
         run: |
           shopt -s nullglob
-          suites=(tests/test-forge-*.sh tests/test_gitlab_*.py)
+          # test-forge-github.sh drives the GitHub backend through bash `gh` shims that
+          # Python cannot start on Windows; the safety job runs it on Linux and macOS.
+          suites=()
+          for s in tests/test-forge-*.sh tests/test_gitlab_*.py; do
+            [ "$s" = tests/test-forge-github.sh ] || suites+=("$s")
+          done
           [ "${#suites[@]}" -gt 0 ] || { echo '::error::no GitLab suites found'; exit 1; }
           failed=0
           for s in "${suites[@]}"; do

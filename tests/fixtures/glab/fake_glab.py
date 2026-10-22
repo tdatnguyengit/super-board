@@ -14,6 +14,11 @@ import json
 import os
 import sys
 
+# A Windows console code page cannot print ✨; the real glab writes UTF-8.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, 'reconfigure'):
+        stream.reconfigure(encoding='utf-8')
+
 d = os.environ['FAKE_GLAB_DIR']
 args = sys.argv[1:]
 log = os.path.join(d, 'calls.log')

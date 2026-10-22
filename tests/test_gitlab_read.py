@@ -10,6 +10,7 @@ shape: an MR's metadata and diff pass github-read's own `metadata` / `diff` chec
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -63,7 +64,8 @@ class GitLabReadTests(unittest.TestCase):
         shim = bin_dir / 'glab'
         shim.write_text(f'#!/bin/sh\nexec python3 "{FAKE}" "$@"\n')
         shim.chmod(0o755)
-        self.env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', FAKE_GLAB_DIR=str(self.root),
+        self.env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', FAKE_GLAB_DIR=str(self.root),
+                        SB_GLAB_CMD=json.dumps([sys.executable, str(FAKE)]),
                         SB_GITLAB_HALT_FILE=str(self.halt), SB_GITLAB_RETRY_DELAY='0',
                         SB_GITLAB_RETRY_AFTER_MAX='0', SB_GITLAB_PROJECT='grp/app')
         for k in ('SB_GITLAB_READ_STRICT', 'SB_GITHUB_READ_STRICT', 'SB_FORGE_HOST'):

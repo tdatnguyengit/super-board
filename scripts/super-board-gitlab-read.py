@@ -51,6 +51,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -61,6 +63,21 @@ PER_PAGE = 100
 MAX_PAGES = 50
 RECOVERING = False
 
+
+
+def glab_command():
+    """The glab to run. SB_GLAB_CMD (a JSON list, or a shell-quoted string) overrides it for
+    tests; otherwise PATH is searched with PATHEXT, so Windows finds glab.exe or a .cmd shim
+    where a bare 'glab' would fail to start."""
+    override = os.environ.get('SB_GLAB_CMD')
+    if override:
+        try:
+            cmd = json.loads(override)
+        except ValueError:
+            cmd = shlex.split(override)
+        if isinstance(cmd, list) and cmd:
+            return [str(c) for c in cmd]
+    return [shutil.which('glab') or 'glab']
 
 class ReadHalted(Exception):
     pass
@@ -161,7 +178,7 @@ class Reader:
         return urllib.parse.quote(self.project, safe='')
 
     def glab(self, args):
-        cmd = ['glab', 'api', '--hostname', self.host, *args]
+        cmd = [*glab_command(), 'api', '--hostname', self.host, *args]
         result = subprocess.run(cmd, capture_output=True, timeout=30)
         return (result.returncode, result.stdout.decode('utf-8', 'replace'),
                 result.stderr.decode('utf-8', 'replace'))
