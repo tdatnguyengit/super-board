@@ -18,6 +18,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd .. && pwd)
+# Python is a native program on Windows: hand it a Windows path to the fake, since
+# sb_glab_api turns Git Bash's own path conversion off for glab's arguments.
+FAKE_GLAB_PY=$(cygpath -m "$ROOT/tests/fixtures/glab/fake_glab.py" 2>/dev/null || echo "$ROOT/tests/fixtures/glab/fake_glab.py")
 S="$ROOT/scripts"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 pass=0; ok() { pass=$((pass + 1)); echo "  ✅ $1"; }
@@ -108,7 +111,7 @@ def apply():
 PY
 cat > "$TMP/bin/glab" <<EOF
 #!/usr/bin/env bash
-rc=0; python3 "$ROOT/tests/fixtures/glab/fake_glab.py" "\$@" || rc=\$?
+rc=0; python3 "$FAKE_GLAB_PY" "\$@" || rc=\$?
 python3 "$TMP/world.py" apply "\$rc"
 exit "\$rc"
 EOF

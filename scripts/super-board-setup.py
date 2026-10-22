@@ -111,6 +111,10 @@ def out(obj, code=0):
 
 
 def run(cmd, cwd=None, check=False, input=None):
+    # Windows starts a bare name only as name.exe; which() also finds .cmd/.bat shims.
+    exe = shutil.which(cmd[0])
+    if exe:
+        cmd = [exe, *cmd[1:]]
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, input=input)
     if check and r.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd[:3])} failed: {(r.stderr or r.stdout).strip()[:300]}")

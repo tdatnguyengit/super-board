@@ -6,6 +6,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
+# Python is a native program on Windows: hand it a Windows path to the fake, since
+# sb_glab_api turns Git Bash's own path conversion off for glab's arguments.
+FAKE_GLAB_PY=$(cygpath -m "$ROOT/tests/fixtures/glab/fake_glab.py" 2>/dev/null || echo "$ROOT/tests/fixtures/glab/fake_glab.py")
 DETECT="$ROOT/scripts/super-board-forge-detect.sh"
 EC="$ROOT/scripts/super-board-env-check.sh"
 SETUP="$ROOT/scripts/super-board-setup.py"
@@ -89,9 +92,21 @@ GLAB="$W/glab-bin"; mkdir -p "$GLAB"
 cat > "$GLAB/glab" <<EOF
 #!/usr/bin/env bash
 if [ "\${1:-}" = version ] && [ -n "\${FAKE_GLAB_VERSION:-}" ]; then echo "glab \$FAKE_GLAB_VERSION (2024-05-01)"; exit 0; fi
-exec "$PY" "$ROOT/tests/fixtures/glab/fake_glab.py" "\$@"
+exec "$PY" "$FAKE_GLAB_PY" "\$@"
 EOF
 GH="$W/gh-bin"; mkdir -p "$GH"; printf '#!/bin/sh\nexit 0\n' > "$GH/gh"; chmod +x "$GLAB/glab" "$GH/gh"
+# setup.py runs glab from Python, which on Windows starts only .exe/.cmd files: add a .cmd twin.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  {
+    printf '@echo off\r\n'
+    printf 'if not "%%~1"=="version" goto run\r\n'
+    printf 'if "%%FAKE_GLAB_VERSION%%"=="" goto run\r\n'
+    printf 'echo glab %%FAKE_GLAB_VERSION%% ^(2024-05-01^)\r\n'
+    printf 'exit /b 0\r\n'
+    printf ':run\r\n'
+    printf '"%s" "%s" %%*\r\n' "$(cygpath -w "$PY")" "$(cygpath -w "$FAKE_GLAB_PY")"
+  } > "$GLAB/glab.cmd" ;;
+esac
 export FAKE_GLAB_DIR="$W/fake"; mkdir -p "$FAKE_GLAB_DIR"; echo '{}' > "$FAKE_GLAB_DIR/routes.json"
 cli() { PATH="$1" bash "$EC" --cli "${@:2}"; }
 

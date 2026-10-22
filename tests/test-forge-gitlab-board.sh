@@ -8,6 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
+# Python is a native program on Windows: hand it a Windows path to the fake, since
+# sb_glab_api turns Git Bash's own path conversion off for glab's arguments.
+FAKE_GLAB_PY=$(cygpath -m "$ROOT/tests/fixtures/glab/fake_glab.py" 2>/dev/null || echo "$ROOT/tests/fixtures/glab/fake_glab.py")
 FORGE="$ROOT/scripts/super-board-forge.sh"
 SETUP="$ROOT/scripts/super-board-gitlab-board-setup.sh"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -17,7 +20,7 @@ pass=0; ok() { pass=$((pass + 1)); echo "  ✅ $1"; }
 mkdir -p "$TMP/bin" "$TMP/glab"
 cat > "$TMP/bin/glab" <<EOF
 #!/usr/bin/env bash
-exec python3 "$ROOT/tests/fixtures/glab/fake_glab.py" "\$@"
+exec python3 "$FAKE_GLAB_PY" "\$@"
 EOF
 chmod +x "$TMP/bin/glab"
 export PATH="$TMP/bin:$PATH" FAKE_GLAB_DIR="$TMP/glab" SB_GLAB_BACKOFF=0 SB_GLAB_CLAIM_SETTLE=0 SB_GLAB_PER_PAGE=100

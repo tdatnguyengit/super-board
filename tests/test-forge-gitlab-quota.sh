@@ -6,13 +6,16 @@
 # block, a blank line and the JSON, as glab prints them.
 set -euo pipefail
 KIT=$(cd "$(dirname "$0")/.." && pwd)
+# Python is a native program on Windows: hand it a Windows path to the fake, since
+# sb_glab_api turns Git Bash's own path conversion off for glab's arguments.
+FAKE_GLAB_PY=$(cygpath -m "$KIT/tests/fixtures/glab/fake_glab.py" 2>/dev/null || echo "$KIT/tests/fixtures/glab/fake_glab.py")
 FORGE="$KIT/scripts/super-board-forge.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 N=0; ok() { N=$((N + 1)); }
 
 mkdir -p "$T/bin" "$T/glab"
-printf '#!/usr/bin/env bash\nexec python3 "%s" "$@"\n' "$KIT/tests/fixtures/glab/fake_glab.py" > "$T/bin/glab"
+printf '#!/usr/bin/env bash\nexec python3 "%s" "$@"\n' "$FAKE_GLAB_PY" > "$T/bin/glab"
 chmod +x "$T/bin/glab"
 export PATH="$T/bin:$PATH" FAKE_GLAB_DIR="$T/glab" SB_GLAB_BACKOFF=0
 unset SB_FORGE SB_CONFIG SB_FORGE_HOST SB_GL_GUARD_MIN_REMAINING
