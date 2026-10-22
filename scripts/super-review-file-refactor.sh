@@ -75,6 +75,7 @@ else
 fi
 
 GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+FORGE="$(dirname "$GITHUB_READ")/super-board-forge.sh"
 python3 "$GITHUB_READ" --check || exit $?
 
 # --- dedupe -----------------------------------------------------------------
@@ -92,11 +93,11 @@ EXISTING=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fingerprint "$FINGERPRINT" '
 if [ -n "$EXISTING" ]; then
   # Same shape problem, seen again on a later PR. Add the sighting, don't stack cards.
   python3 "$GITHUB_READ" --check || exit $?
-  gh issue comment "$EXISTING" "${REPO_FLAG[@]}" \
-    --body "Seen again during review${PR:+ of #${PR}}.
-
-$(cat "$BODY_FILE")" >/dev/null 2>&1 \
-    || { python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+  SEEN_TMP=$(mktemp)
+  printf 'Seen again during review%s.\n\n%s\n' "${PR:+ of #${PR}}" "$(cat "$BODY_FILE")" > "$SEEN_TMP"
+  bash "$FORGE" --config "$CONFIG" issue-comment "$EXISTING" "$SEEN_TMP" >/dev/null 2>&1 \
+    || { rm -f "$SEEN_TMP"; python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+  rm -f "$SEEN_TMP"
   echo "$EXISTING"
   exit 0
 fi
@@ -188,12 +189,13 @@ TITLE=$(printf '%s' "$TITLE" | LC_ALL=C sed -E 's/^[^ -~]{1,16} \[[a-z-]+\] [^:]
 SCOPE="${AREA:-${FINGERPRINT%%|*}}"
 SCOPE=$(echo "${SCOPE:-code}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._/-]+#-#g; s#^-+|-+$##g')
 python3 "$GITHUB_READ" --check || exit $?
-ISSUE_URL=$(gh issue create "${REPO_FLAG[@]}" \
+CREATED=$(bash "$FORGE" --config "$CONFIG" issue-create \
   --title "♻️ [refactor] ${SCOPE:-code}: ${TITLE}" \
   --body-file "$BODY_TMP" \
   "${LABEL_ARGS[@]}") || { python3 "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
 
-ISSUE_N=$(basename "$ISSUE_URL")
+ISSUE_URL=$(printf '%s' "$CREATED" | jq -r .url)
+ISSUE_N=$(printf '%s' "$CREATED" | jq -r .number)
 
 # --- place on the board -----------------------------------------------------
 # The holding column is deliberately NOT in the config's managed `columns` list,

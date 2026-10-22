@@ -38,14 +38,14 @@ Nothing else. Stop is intentionally tolerant — its job is to bring the system 
 
 1. **Look up branch + PR**
    - `git branch -a --list "*issue-<N>-*"` → latest commit on the issue branch.
-   - `gh pr list --search "head:issue-<N>-*"` → PR number, if any.
+   - `.claude/bin/super-board-forge.sh --config <cfg> pr-list --state open` → the PR whose `headRefName` starts with `issue-<N>-`, if any.
 2. **Post the stop comment** on the issue AND (if it exists) the PR, in the comment format of
    writing-standard.md § 4 — header `[orchestrator] [report] 🛑 stopped · <lane> lane`, then:
    - Did: worker PID and timestamp.
    - ✅ Done: last commit on the branch (a recovery point; inspect the preserved worktree for later edits).
    - ❌ Not done: interrupted work may be uncommitted.
    - Next: `super-board run <slug>`.
-3. **Release the assignee mutex** on the issue (`gh issue edit --remove-assignee <bot>`).
+3. **Release the assignee mutex** on the issue (`.claude/bin/super-board-forge.sh --config <cfg> release <N> <bot>`).
 4. **Remove descriptive labels** (`loop:in-build`, `loop:in-qa`, `loop:in-review`) — best-effort.
 5. **SIGTERM the worker PID**, sleep 1s, SIGKILL if still alive.
 
@@ -102,7 +102,7 @@ Per the cardinal orchestrator/worker rule:
 
 | Symptom | Cause | Recovery |
 |---|---|---|
-| `gh issue comment` fails | gh auth expired or network blip | Comments are best-effort. The kill + lock cleanup still happens. Manually note the stop in the issue later if needed. |
+| `issue-comment` fails | gh auth expired or network blip | Comments are best-effort. The kill + lock cleanup still happens. Manually note the stop in the issue later if needed. |
 | Assignee release fails (gh 403) | rate limit or auth | The next `super-board run` startup runs `reap_finished_locks` which sweeps stale assignees idempotently. No manual action needed. |
 | Worker PID survives SIGKILL | extremely rare (kernel-level stuck process) | `ps aux \| grep claude -p` to confirm, then escalate via OS tools. |
 | Stop reports "nothing to stop" but `ps` shows live workers | dispatcher and workers were started by a different repo / different inflight dir | Run stop in the right repo OR `pkill -f 'super-board-run\.sh'` manually + `pkill -f 'claude -p .*super-board'`. |

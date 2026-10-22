@@ -98,7 +98,7 @@ fi
 # Compose the worker prompt: preamble + issue body + working-dir footer
 SB_BIN="$REPO_DIR/.claude/bin"
 ISSUE_JSON=$(python3 "$SB_BIN/super-board-github-read.py" --kind issue -- issue view "$N" --json number,title,body 2>&1) || {
-  echo "error: gh issue view #$N failed:" >&2
+  echo "error: reading issue #$N failed:" >&2
   echo "$ISSUE_JSON" >&2
   exit 79
 }

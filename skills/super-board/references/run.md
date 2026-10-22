@@ -252,9 +252,9 @@ in a sub-agent, before touching a worktree.
 
 ```
 [ ] source .claude/bin/super-board-gh-guard.sh; sb_gh_guard_check 200
-[ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
+[ ] build the in-flight list: .claude/bin/super-board-forge.sh --config <cfg> items (one call) → [{number,title,status}] for
     Building / QA / Review / Ready cards; save it to a temp file
-[ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
+[ ] bash .claude/bin/super-board-preflight.sh --config <cfg> --repo <owner/name> --issues <N[,M…]> \
          --inflight <file> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
 [ ] act on the outcome below, then return one verdict per card
@@ -441,27 +441,27 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 
 ### Merge protocol (Reviewer only — added 2026-08-06, issue #9)
 
-Builder opens every PR as a **draft**, and GitHub will not merge a draft: `gh pr merge --auto`
+Builder opens every PR as a **draft**, and GitHub will not merge a draft: auto-merge
 on a draft queues forever and never fires. A run that skipped this step produced two
 substantial builds and landed **zero commits on `main` in six hours**. The Reviewer must
 walk these steps in order, and the card **must not reach Done until the merge is confirmed
 on the base branch**.
 
 ```
-1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
-2. Merge through the gate (step 5), pinned to the reviewed head — never a bare
-   `gh pr merge`. The gate applies `merge_policy` (who merges; `default: "human"`
+1. Mark ready      .claude/bin/super-board-forge.sh --config <cfg> pr-ready <PR>   # idempotent; no-op if already ready
+2. Merge through the gate (step 5), pinned to the reviewed head — never a direct
+   merge. The gate applies `merge_policy` (who merges; `default: "human"`
    keeps a person on every merge) and `migrations` (which databases the robot may
    migrate) itself; the Reviewer does not second-guess either, it routes the exit code.
 3. Confirm the merge LANDED, do not trust the exit code:
-     gh pr view <PR> --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "none")'
+     .claude/bin/super-board-forge.sh --config <cfg> pr-view <PR> | jq -r '.state + " " + (.mergeCommit // "none")'
      Expect: MERGED <sha>.  Then verify the sha is reachable from the base branch:
      git fetch origin <base> && git merge-base --is-ancestor <sha> origin/<base>
 4. Only after step 3 passes: close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
    citing the merge commit sha.
-5. Merge through the gate, never with a bare `gh pr merge`. Record the head you
+5. Merge through the gate, never any other way. Record the head you
    reviewed when review passes, and hand it to the gate:
-     HEAD=$(gh pr view <N> --json headRefOid -q .headRefOid)   # at the moment review passes
+     HEAD=$(.claude/bin/super-board-forge.sh --config <config> pr-view <N> | jq -r .headRefOid)   # at the moment review passes
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
@@ -603,25 +603,25 @@ column.
 
 ## Worker contract (every lane on claim)
 
-Claim uses a **GitHub Issue assignee mutex** — atomic compare-and-set via `gh issue edit --add-assignee`. Labels are descriptive only; the assignee is the lock.
+Claim uses a **GitHub Issue assignee mutex** — compare-and-set via `.claude/bin/super-board-forge.sh --config <cfg> claim <N> <bot_identity>` (add the assignee, re-read, keep it only when it is the sole assignee). Labels are descriptive only; the assignee is the lock.
 
 ```
 1. ATTEMPT CLAIM (atomic):
-   ├─ `gh issue edit <N> --add-assignee super-board-bot[bot]`
-   │      (if a different assignee is already set → 422; treat as "already claimed")
-   ├─ On 422 / conflict → another worker has it; skip this dispatch.
+   ├─ `.claude/bin/super-board-forge.sh --config <cfg> claim <N> super-board-bot[bot]`
+   │      (exit 2 + the holder's login when a different assignee is already set → "already claimed")
+   ├─ On exit 2 → another worker has it; skip this dispatch.
    └─ On success → continue. Apply descriptive label
        (loop:in-build / loop:in-qa / loop:in-review) for UI clarity only.
 2. SANITY CHECK: issue body has `## Acceptance Criteria` with ≥1 bullet
    ├─ Missing → write the full Block template (see §4) with reason ❓
-   │           release claim (`gh issue edit --remove-assignee`)
+   │           release claim (`.claude/bin/super-board-forge.sh --config <cfg> release <N> <bot_identity>`)
    │           move card to Blocked, continue with next card.
    └─ Present → proceed.
 3. Do the lane's work (build / QA / review).
 4. If this lane opened a PR or pushed changes, refresh [PR author notes](pr-author-notes.md).
    Comment evidence on issue + PR (writing-standard.md § 4) and rewrite your PR body blocks.
 5. Move card to next column (or Blocked with the full §4 template; dropped on purpose → closed, Done, 🤷 comment).
-6. RELEASE CLAIM (`gh issue edit --remove-assignee super-board-bot[bot]`) and remove descriptive label.
+6. RELEASE CLAIM (`.claude/bin/super-board-forge.sh --config <cfg> release <N> super-board-bot[bot]`) and remove descriptive label.
 ```
 
 The `super-board-bot[bot]` identity is either (a) a GitHub App installed on the repo, or (b) the user's own account on solo projects — onboard step 2 picks which. The assignee mutex is reliable because GitHub serializes assignee writes per issue.
@@ -637,7 +637,7 @@ The dispatcher MUST also:
 3. **Cap one worker per lane** — track `BUILD_PID` / `QA_PID` / `REVIEW_PID`; do not dispatch to a lane whose prior PID is still alive.
 4. **Reap stale locks each tick** — `reap_finished_locks` removes any lock whose PID no longer exists.
 5. **Orphan-scan on startup** — refuse to start if any `claude -p .*super-board run` worker is already running from a prior crashed dispatcher.
-6. **One board read per tick** — `super-board-card.sh items` once per tick, not per column lookup (~1 GraphQL point per 100 cards).
+6. **One board read per tick** — `super-board-forge.sh items` once per tick, not per column lookup (~1 GraphQL point per 100 cards).
 
 The three locks (assignee, in-flight file, lane PID) are defense in depth: any one of them alone has a race window; together they make a duplicate dispatch effectively impossible.
 
@@ -762,7 +762,7 @@ Records: config used, columns, target, per-card history (claim → completion �
 
 Workers share the dispatcher's gh-auth token bucket. The dispatcher's `gh_rate_guard` does NOT protect worker traffic. Every worker MUST follow `rate-limit-etiquette.md` (in this directory):
 
-- Move and read cards with `.claude/bin/super-board-card.sh --config <cfg> move <issue> <Status>` / `status <issue>` — 1 GraphQL point. Every "move card X → Y" in the lifecycles above means this call. Comments, labels and PR reads go over REST (`rate-limit-etiquette.md` → "Price list").
+- Move and read cards with `.claude/bin/super-board-forge.sh --config <cfg> move <issue> <Status>` / `status <issue>` — 1 GraphQL point on GitHub. Every "move card X → Y" in the lifecycles above means this call. Comments, labels and PR reads go over REST (`rate-limit-etiquette.md` → "Price list").
 
 - Source `scripts/super-board-gh-guard.sh` at worker start.
 - Call `sb_gh_guard_check 200` before any burst of gh calls (thread reads, sub-agent spawn, exit verification).
@@ -775,8 +775,8 @@ Workers share the dispatcher's gh-auth token bucket. The dispatcher's `gh_rate_g
 Before releasing the claim assignee and exiting, every worker MUST verify:
 
 - [ ] Issue comment AND PR comment both written (per "Commenting cadence" above).
-- [ ] Card column move's mutation returned success. **Trust the exit code of `super-board-card.sh move`** — a re-read of the board was the per-worker quota tax (`rate-limit-etiquette.md` §3). If the mutation returned non-zero, preserve its unknown outcome, leave the assignee in place, and pause the run locally. Reconcile the remote card state before any repeat; never blindly retry a write or depend on a successful halt comment.
-- [ ] Claim assignee released (`gh issue edit --remove-assignee <bot_identity>`) and the descriptive `loop:in-*` label removed.
+- [ ] Card column move's mutation returned success. **Trust the exit code of `super-board-forge.sh move`** — a re-read of the board was the per-worker quota tax (`rate-limit-etiquette.md` §3). If the mutation returned non-zero, preserve its unknown outcome, leave the assignee in place, and pause the run locally. Reconcile the remote card state before any repeat; never blindly retry a write or depend on a successful halt comment.
+- [ ] Claim assignee released (`.claude/bin/super-board-forge.sh --config <cfg> release <N> <bot_identity>`) and the descriptive `loop:in-*` label removed.
 - [ ] On failure handoff: `root-cause-hash:` line is present in the PR handoff comment (per "Root-cause hash" above).
 - [ ] On Block/Skip exit: the full template from `block-template.md` is populated on BOTH the issue and the PR (if a PR exists); the reason emoji is one of the nine in the vocabulary table (🔐 💳 🔑 ❓ 🛡 🧑 🤷 📦 🎨).
 - [ ] `gh-quota-on-exit:` line appended to PR handoff comment.

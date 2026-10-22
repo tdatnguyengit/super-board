@@ -36,6 +36,8 @@ printf '## Problem\nShallow module: interface nearly as complex as implementatio
 cat > "$WORK/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH_LOG"
+# Comments go over REST through the forge (0 GraphQL points).
+case "$*" in "api repos/"*"/comments -F body=@"*) [ -z "${FAIL_COMMENT:-}" ] || exit 1; echo '{}'; exit 0 ;; esac
 case "$1 ${2:-}" in
   "repo view") echo "acme/app" ;;
   "api graphql") [ -z "${FAIL_DEDUPE:-}" ] || exit 1;
@@ -113,7 +115,7 @@ echo "── dedupe"
 OUT=$(DEDUPE_HIT="301" run --config "$WORK/config.json" --title "Seen before" \
   --body-file "$WORK/body.md" --fingerprint "OrderIntake|shallow" --pr 99)
 is  "returns the existing issue" "301" "$OUT"
-has "comments instead of creating" "$(cat "$GH_LOG")" "issue comment 301"
+has "comments instead of creating" "$(cat "$GH_LOG")" "issues/301/comments"
 case "$(cat "$GH_LOG")" in
   *"issue create"*) bad "no duplicate card created" "no 'issue create'" "found one" ;;
   *) ok "no duplicate card created" ;;
@@ -194,12 +196,12 @@ echo "── required-read and uncertain-write failure"
 rm -f "$SB_GITHUB_HALT_FILE"
 OUT=$(FAIL_DEDUPE=1 run --config "$WORK/config.json" --title "Read outage" --body-file "$WORK/body.md" --fingerprint "outage|test"); RC=$?
 is "three failed dedupe reads halt" 79 "$RC"
-case "$(cat "$GH_LOG")" in *"issue create"*|*"issue comment"*) bad "unreadable dedupe never writes" "no writes" "write attempted" ;; *) ok "unreadable dedupe never writes" ;; esac
+case "$(cat "$GH_LOG")" in *"issue create"*|*"/comments -F"*) bad "unreadable dedupe never writes" "no writes" "write attempted" ;; *) ok "unreadable dedupe never writes" ;; esac
 is "three dedupe attempts" 3 "$(grep -c '^api graphql' "$GH_LOG")"
 rm -f "$SB_GITHUB_HALT_FILE"
 OUT=$(FAIL_COMMENT=1 DEDUPE_HIT=301 run --config "$WORK/config.json" --title "Write outage" --body-file "$WORK/body.md" --fingerprint "outage|test"); RC=$?
 is "uncertain comment outcome halts" 79 "$RC"
-is "comment is attempted once" 1 "$(grep -c '^issue comment' "$GH_LOG")"
+is "comment is attempted once" 1 "$(grep -c '^api repos/.*/comments -F' "$GH_LOG")"
 is "failed comment does not report success ID" "" "$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

@@ -163,7 +163,7 @@ OUT=$(STUB_HITS='[{"number":301,"state":"OPEN","body":"x err|sentry|4411 y"}]' r
 is  "open hit is a duplicate" "duplicate|#301|bug|Checkout 500 on empty cart" "$OUT"
 OUT=$(STUB_HITS='[{"number":301,"state":"OPEN","body":"err|sentry|4411"}]' run "${BUG[@]}" --yes)
 is  "--yes on duplicate returns existing" "301" "$OUT"
-has "comments instead of filing" "$(cat "$GH_LOG")" "issue comment 301"
+has "comments instead of filing" "$(cat "$GH_LOG")" "issues/301/comments"
 lacks "no duplicate card" "$(cat "$GH_LOG")" "issue create"
 OUT=$(STUB_HITS='[{"number":88,"state":"CLOSED","body":"prs|merge-gate|lockfile-drift"}]' run "${FIX[@]}")
 has "closed-only hit is a recurrence" "$OUT" "recurrence|#88"
@@ -196,8 +196,8 @@ echo "── posthog bug with extra labels (needs-triage, ux)"
 OUT=$(run --type bug --source posthog --title "Dead clicks on /checkout" --body-file "$WORK/bug.md" --fingerprint "posthog|dead_click|1a2b3c" --label needs-triage --label ux --yes)
 is  "returns the new issue"   "412" "$OUT"
 has "stamps posthog fingerprint" "$(cat "$BODY_LOG")" "super-collect-fingerprint: posthog|dead_click|1a2b3c"
-has "labels needs-triage"     "$(cat "$GH_LOG")" "--add-label needs-triage"
-has "labels ux"               "$(cat "$GH_LOG")" "--add-label ux"
+has "labels needs-triage"     "$(cat "$GH_LOG")" "labels[]=needs-triage"
+has "labels ux"               "$(cat "$GH_LOG")" "labels[]=ux"
 has "labels collect:posthog"  "$(cat "$GH_LOG")" "collect:posthog"
 lacks "never Ready"           "$(cat "$GH_LOG")" "opt_Ready"
 

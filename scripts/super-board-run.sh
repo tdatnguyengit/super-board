@@ -120,10 +120,12 @@ log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$RUN_MANIFEST"; }
 PROJECT_ITEMS_JSON=""
 fetch_project_items() {
   # One board read per tick; all column lookups read from this cache.
-  # super-board-card.sh items: ~1 GraphQL point per 100 cards, where
-  # `gh project item-list` spends 101 per 100.
-  local fresh
-  fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || return $?
+  # forge items (GitHub: super-board-card.sh items): ~1 GraphQL point per 100
+  # cards, where `gh project item-list` spends 101 per 100.
+  local fresh cfg=""
+  [ -f "$CONFIG_PATH" ] && cfg="$CONFIG_PATH"
+  fresh=$(BUILD_LOOP_OWNER="$PROJECT_OWNER" BUILD_LOOP_PROJECT="$PROJECT_NUMBER" \
+    bash "$(dirname "$SB_GITHUB_READ")/super-board-forge.sh" ${cfg:+--config "$cfg"} items) || return $?
   PROJECT_ITEMS_JSON="$fresh"
 }
 

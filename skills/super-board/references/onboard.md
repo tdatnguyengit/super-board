@@ -199,6 +199,8 @@ Write it atomically (temp file + rename) after every answer. A halt never loses 
       it never takes a new snapshot over a partially upgraded board. No extra setup question.
 
 2. 🔑 GITHUB
+   ├─ First: bash $SB/super-board-forge-detect.sh. forge gitlab (or exit 3 and the user says GitLab)
+   │    → follow references/onboard-gitlab.md instead of this step; github → continue here.
    ├─ Bash(gh auth status). Signed in with project scopes → `✓ GitHub connected.`; continue below.
    ├─ Not signed in → one line, then Bash(gh auth login) — the permission prompt asks.
    ├─ Missing scopes → "This opens a browser to approve board access — needed to move cards and

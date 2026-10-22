@@ -79,11 +79,15 @@ read_lock() {
   return 0
 }
 
-# Look up the PR number for an issue's branch (if any). One gh call.
+# Every forge call is best-effort: a stop must never trip the run's read halt.
+FORGE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-forge.sh"
+forge() { SB_FORGE_BEST_EFFORT=1 bash "$FORGE" --config "$CONFIG_PATH" "$@"; }
+
+# Look up the PR number for an issue's branch (if any). One forge call.
 pr_for_issue() {
   local issue="$1"
-  gh pr list --state open --json number,headRefName \
-    --jq ".[] | select(.headRefName | startswith(\"issue-${issue}-\")) | .number" 2>/dev/null | head -1
+  forge pr-list --state open 2>/dev/null \
+    | jq -r --arg p "issue-${issue}-" '.[] | select(.headRefName | startswith($p)) | .number' 2>/dev/null | head -1
 }
 
 # Latest commit on the issue's branch (local or remote). Best-effort.
@@ -95,7 +99,7 @@ last_commit_on_branch() {
 }
 
 post_stop_comment() {
-  local issue="$1" lane="$2" pid="$3" pr commit body
+  local issue="$1" lane="$2" pid="$3" pr commit body body_file
   commit=$(last_commit_on_branch "$issue")
   pr=$(pr_for_issue "$issue" || echo "")
 
@@ -106,23 +110,26 @@ Did: \`super-board stop\` ended worker PID ${pid:-unknown} at ${TS}
 ❌ Not done: interrupted work may be uncommitted; inspect the preserved worktree
 Next: preserve edits before \`super-board run ${CONFIG_SLUG}\`; dirty or legacy worktrees need inspection"
 
-  gh issue comment "$issue" --body "$body" >/dev/null 2>&1 \
+  body_file=$(mktemp)
+  printf '%s\n' "$body" > "$body_file"
+  forge issue-comment "$issue" "$body_file" >/dev/null 2>&1 \
     && log "  💬 issue comment posted on #${issue}" \
     || log "  ⚠ failed to comment on issue #${issue} (continuing)"
 
   if [ -n "$pr" ]; then
-    gh pr comment "$pr" --body "$body" >/dev/null 2>&1 \
+    forge pr-comment "$pr" "$body_file" >/dev/null 2>&1 \
       && log "  💬 PR comment posted on #${pr}" \
       || log "  ⚠ failed to comment on PR #${pr} (continuing)"
   fi
+  rm -f "$body_file"
 }
 
 release_claim() {
   local issue="$1"
   [ -z "$BOT_LOGIN" ] && return 0
-  gh issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+  forge release "$issue" "$BOT_LOGIN" >/dev/null 2>&1 || true
   for label in loop:in-build loop:in-qa loop:in-review; do
-    gh issue edit "$issue" --remove-label "$label" >/dev/null 2>&1 || true
+    forge issue-edit "$issue" --remove-label "$label" >/dev/null 2>&1 || true
   done
   log "  🔓 released assignee + lane labels on #${issue}"
 }

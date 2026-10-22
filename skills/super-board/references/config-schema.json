@@ -2,7 +2,7 @@
 // JSON5-style `//` line comments to inline field notes from spec §4 alongside
 // the schema. Strip comments before validating an actual config file as JSON.
 //
-// One config per GitHub project this repo drives, written to
+// One config per board (GitHub project or GitLab issue board) this repo drives, written to
 // `.claude/super-board/configs/<slug>.json` (committed). The active
 // pointer `.claude/super-board/active` is gitignored and per-machine.
 
@@ -13,11 +13,43 @@
   // E.g. "staging QA" or "admin build pipeline".
   "description": "<short scannable label, e.g. 'staging QA' or 'admin build pipeline'>",
 
+  // Where the board, issues and pull/merge requests live: "github" | "gitlab".
+  // Absent → "github" (every config before GitLab support). Onboard proposes it
+  // from the origin remote (super-board-forge-detect.sh) and asks to confirm.
+  // `.claude/bin/super-board-forge.sh` picks its backend from this key; the CLI
+  // checks need only `gh` for github and only `glab` for gitlab
+  // (super-board-env-check.sh --cli). Contract: docs/forge-contract.md.
+  "forge": "github",
+
+  // The forge's host. null → github.com / gitlab.com. Self-managed GitLab:
+  // "gitlab.example.com" (an https port stays, e.g. "git.corp:8443"). glab is
+  // checked with `glab auth status --hostname <forge_host>`.
+  "forge_host": null,
+
+  // GitHub only (forge "github"). On GitLab the board is the project's issue
+  // board: see `gitlab` below; `owner` / `number` are not read.
   "project": {
     "owner": "<github-owner>",
     "title": "<project title on GitHub>",
     // Required; `gh project` CLI takes number, not title (titles aren't unique).
     "number": 0
+  },
+
+  // GitLab only (forge "gitlab"); absent on GitHub configs.
+  "gitlab": {
+    // Required when forge is gitlab: the full project path, subgroups included,
+    // exactly as in the project's URL. Onboard fills it from the origin remote.
+    "project": "group/sub/app",
+    // Column labels: sb::Backlog, sb::Ready, … (scoped labels; plain labels on
+    // GitLab Free). Done is a CLOSED issue, not a label; every other column is
+    // exactly one `<prefix><Column>` label.
+    "column_label_prefix": "sb::",
+    // Filled by onboarding's GitLab board setup (super-board-gitlab-board-setup.sh);
+    // informational, never required.
+    "board_id": null,
+    // Merge gate: an MR must have a SUCCESS pipeline before it merges. `false` lets
+    // an MR with no pipeline at all merge (a FAILURE or PENDING one still waits).
+    "require_pipeline": true
   },
 
   // No `variant` (removed in v3.0.0). Every board has the same columns, and a

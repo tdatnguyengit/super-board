@@ -59,7 +59,7 @@
 # Usage:
 #   super-board-wave-plan.sh --config <config.json> [--items <project-items.json>]
 #                            [--deps <deps.json>]
-# Without --items, fetches live board state via super-board-card.sh items — the
+# Without --items, fetches live board state via super-board-forge.sh items (GitHub: super-board-card.sh items) — the
 # item-list shape for ~1 GraphQL point per 100 cards, where `gh project item-list`
 # spends 101 per 100 (fieldValues x four nested connections).
 # Without --deps, derives the graph via super-board-deps.sh. Pass --deps in tests
@@ -101,7 +101,7 @@ NUMBER=$(echo "$CONFIG_JSON" | jq -r '.project.number')
 if [ -n "$ITEMS_FILE" ]; then
   ITEMS=$(cat "$ITEMS_FILE")
 else
-  ITEMS=$("$HERE/super-board-card.sh" --owner "$OWNER" --number "$NUMBER" items)
+  ITEMS=$(BUILD_LOOP_OWNER="$OWNER" BUILD_LOOP_PROJECT="$NUMBER" bash "$HERE/super-board-forge.sh" --config "$CONFIG" items)
 fi
 
 # `variant` was removed in v3.0.0 (labels route cards now). Absent or "full" is
@@ -120,11 +120,12 @@ if [ -n "$DEPS_FILE" ]; then
 else
   REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' \
            | sed -E 's#^https?://github\.com/##; s#\.git$##')
-  [ -n "$REPO" ] || { echo "config.repo.remote is required to derive dependencies" >&2; exit 66; }
+  FORGE="${SB_FORGE:-$(echo "$CONFIG_JSON" | jq -r '.forge // "github"')}"
+  [ -n "$REPO" ] || [ "$FORGE" = gitlab ] || { echo "config.repo.remote is required to derive dependencies" >&2; exit 66; }
   HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   # A graph we cannot fetch is not a graph of zero blockers. Fail rather than
   # plan a wave that treats every card as free.
-  DEPS=$("$HERE/super-board-deps.sh" --repo "$REPO" --limit 300) || {
+  DEPS=$("$HERE/super-board-deps.sh" --repo "$REPO" --config "$CONFIG" --limit 300) || {
     rc=$?; echo "could not derive the dependency graph for ${REPO}" >&2; exit "$rc"; }
 fi
 

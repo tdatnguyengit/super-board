@@ -54,6 +54,9 @@ case "$1 ${2:-}" in
     hits="${STUB_HITS:-[]}"
     case "$*" in *"--state open"*) hits=$(echo "$hits" | jq '[.[] | select(.state == "OPEN")]');; esac
     if [ -n "$jq_expr" ]; then echo "$hits" | jq -r "$jq_expr"; else echo "$hits"; fi ;;
+  "api repos/"*)
+    # Forge REST writes: a comment's body file, or a label add.
+    for a in "$@"; do case "$a" in body=@*) cat "${a#body=@}" > "$COMMENT_LOG" ;; esac; done ;;
   "issue comment")
     prev=""
     for a in "$@"; do [ "$prev" = "--body" ] && printf '%s' "$a" > "$COMMENT_LOG"; prev="$a"; done ;;
@@ -99,7 +102,7 @@ OPEN='[{"number":301,"state":"OPEN","body":"…\n<!-- super-collect-fingerprint:
 is  "dry-run plans a duplicate" "duplicate|#301|bug|Checkout crashes when the last item is removed" "$(STUB_HITS="$OPEN" run "${BUG[@]}")"
 OUT=$(STUB_HITS="$OPEN" run "${BUG[@]}" --yes)
 is  "--yes returns the existing issue" "301" "$OUT"
-has "comments on #301" "$(cat "$GH_LOG")" "issue comment 301"
+has "comments on #301" "$(cat "$GH_LOG")" "issues/301/comments"
 is  "comment opens with 'Seen again' and the source" "Seen again by super-collect (sentry)." "$(head -1 "$COMMENT_LOG")"
 has "comment carries the new evidence" "$(cat "$COMMENT_LOG")" "37 events, 14 users"
 lacks "no issue create" "$(cat "$GH_LOG")" "issue create"
@@ -115,7 +118,7 @@ is  "dry-run plans a recurrence" "recurrence|#88|fix|Date-only strings read with
 is  "--yes files a new issue" "412" "$(STUB_HITS="$CLOSED" run "${FIX[@]}" --yes)"
 has "body names the closed issue" "$(cat "$BODY_LOG")" "> Recurrence: this fingerprint was last filed as #88, which is closed."
 has "body keeps the same fingerprint" "$(cat "$BODY_LOG")" "<!-- super-collect-fingerprint: prs|dates|date-only-local-getters -->"
-lacks "no comment on the closed issue" "$(cat "$GH_LOG")" "issue comment"
+lacks "no comment on the closed issue" "$(cat "$GH_LOG")" "/comments -F"
 
 echo "── ticket format: Problem · Context · Fix · Acceptance Criteria · Risk"
 drop() { sed "/^## $1\$/,/^## /{/^## $1\$/d;/^## /!d;}" "$2"; }   # delete one section
@@ -156,9 +159,9 @@ echo "── PostHog tracking gap → one analytics feature ticket"
 is  "gap plan line" "would-file|feature|Receipt upload: no success or failure event|Backlog" "$(run "${GAP[@]}")"
 is  "gap files" "412" "$(run "${GAP[@]}" --yes)"
 has "routes via the QA filer as a feature" "$(cat "$GH_LOG")" "--label feature"
-has "labels analytics"        "$(cat "$GH_LOG")" "--add-label analytics"
-has "labels collect:posthog"  "$(cat "$GH_LOG")" "--add-label collect:posthog"
-has "labels source:collect"   "$(cat "$GH_LOG")" "--add-label source:collect"
+has "labels analytics"        "$(cat "$GH_LOG")" "labels[]=analytics"
+has "labels collect:posthog"  "$(cat "$GH_LOG")" "labels[]=collect:posthog"
+has "labels source:collect"   "$(cat "$GH_LOG")" "labels[]=source:collect"
 has "stamps gap fingerprint"  "$(cat "$BODY_LOG")" "<!-- super-collect-fingerprint: gap|receipt-upload -->"
 has "stamps the source"       "$(cat "$BODY_LOG")" "<!-- super-collect-source: posthog -->"
 has "lands in Backlog"        "$(cat "$GH_LOG")" "opt_Backlog"
@@ -170,7 +173,7 @@ echo "── prs pattern ticket"
 is  "prs| prefix required" 64 "$(code --type fix --source prs --title T --body-file "$TICKETS/fix-prs-date-only-parsing.md" --fingerprint "dates|x")"
 is  "pattern files once" "412" "$(run "${FIX[@]}" --yes)"
 has "files as tech-debt" "$(cat "$GH_LOG")" "--label tech-debt"
-has "labels collect:prs" "$(cat "$GH_LOG")" "--add-label collect:prs"
+has "labels collect:prs" "$(cat "$GH_LOG")" "labels[]=collect:prs"
 
 echo "── dedupe matches the fingerprint exactly"
 PREFIX='[{"number":301,"state":"OPEN","body":"<!-- super-collect-fingerprint: err|sentry|4411 -->"}]'

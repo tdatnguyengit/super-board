@@ -1,6 +1,7 @@
 name: cross-platform
 
-# All offline safety suites run on Linux/macOS. Windows checks the status reader.
+# All offline safety suites run on Linux/macOS. Windows checks the status reader and
+# runs the GitLab suites.
 # Reused by release.yml so a failed suite prevents the publish job from running.
 permissions:
   contents: read
@@ -59,6 +60,59 @@ jobs:
       # what the dispatcher actually emits.
       - name: status — parser fixture tests
         run: python tests/test_status_parse.py
+
+  # GitLab backend suites (fake glab, no network) on all three OSes. Linux/macOS also run
+  # them inside `safety` (run-safety.sh picks up every tests/test-* and tests/test_*);
+  # this job adds Windows (Git Bash), which `safety` does not cover.
+  gitlab:
+    name: gitlab (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      # Bash scripts must keep LF endings on Windows.
+      - name: keep LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: python3 on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          command -v python3 >/dev/null && exit 0
+          mkdir -p "$RUNNER_TEMP/py3"
+          printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$RUNNER_TEMP/py3/python3"
+          chmod +x "$RUNNER_TEMP/py3/python3"
+          echo "$RUNNER_TEMP/py3" >> "$GITHUB_PATH"
+      - name: Run the GitLab suites
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          shopt -s nullglob
+          # test-forge-github.sh drives the GitHub backend through bash `gh` shims that
+          # Python cannot start on Windows; the safety job runs it on Linux and macOS.
+          suites=()
+          for s in tests/test-forge-*.sh tests/test_gitlab_*.py; do
+            [ "$s" = tests/test-forge-github.sh ] || suites+=("$s")
+          done
+          [ "${#suites[@]}" -gt 0 ] || { echo '::error::no GitLab suites found'; exit 1; }
+          failed=0
+          for s in "${suites[@]}"; do
+            echo "::group::$s"
+            case "$s" in *.sh) bash "$s" ;; *.py) python3 "$s" ;; esac || { echo "::error::$s failed"; failed=1; }
+            echo '::endgroup::'
+          done
+          exit "$failed"
 
   safety:
     name: safety (${{ matrix.os }} / py${{ matrix.python }})

@@ -72,7 +72,7 @@ else parses.
 
 A card dropped on purpose uses the same template with the header `[<role>] [report] 🤷 dropped ·
 <reason>`, replaces `Why blocked` with `Why dropped` and `What blocks` with `Why out of scope`, is
-closed as not planned (`gh issue close <N> --reason "not planned"`) and moves to Done.
+closed as not planned (`.claude/bin/super-board-forge.sh --config <cfg> issue-close <N> --reason not_planned`) and moves to Done.
 
 ## Reason emoji vocabulary
 

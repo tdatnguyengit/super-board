@@ -186,10 +186,10 @@ The `iteration-N.md` Section 3 is the per-iter audit (with `gh_issue: <N>` back-
 
 **Triage all loop-filed findings:**
 ```bash
-gh issue list -l source:qa --state open
+.claude/bin/super-board-forge.sh issue-list --label source:qa --state open
 ```
 
-This is a carved exception to the project rule "ask before `gh issue create`": the loop is autonomous and unattended, so it is authorized to auto-file — but ONLY with the clear `source:qa` label and the evidence template below.
+This is a carved exception to the project rule "ask before filing an issue": the loop is autonomous and unattended, so it is authorized to auto-file — but ONLY with the clear `source:qa` label and the evidence template below.
 
 ### Required issue body template
 
@@ -619,7 +619,7 @@ shipped code.
 
 When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "super-board run"):
 
-- **GitHub budget** — every "move card" is `.claude/bin/super-board-card.sh --config <cfg> move <N> <Status>` (1 GraphQL point; `gh project item-list` / `field-list` cost ~100–200). Comments, labels and PR reads go over REST; [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the calls.
+- **GitHub budget** — every "move card" is `.claude/bin/super-board-forge.sh --config <cfg> move <N> <Status>` (GitHub: 1 GraphQL point via super-board-card.sh; a raw project item-list / field-list costs ~100–200). Every issue, comment, label and PR call is a verb of the same script (`.claude/bin/super-board-forge.sh help` lists them); [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the costs.
 
 ### State protocol (same as super-build)
 - Read from issue + PR comments + PR review threads.
